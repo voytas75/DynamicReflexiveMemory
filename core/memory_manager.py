@@ -195,14 +195,14 @@ class ChromaMemoryStore:
 
     def _build_embedding_function(self, config: AppConfig):
         """Construct the embedding function if configuration allows."""
-        if chroma_embeddings is None:
-            self._logger.warning(
-                "Chroma embedding functions unavailable; install Chroma extras to enable embeddings."
-            )
-            return None
-
         embedding_cfg = config.embedding
         if embedding_cfg is None:
+            return None
+
+        if chroma_embeddings is None:
+            self._logger.warning(
+                "Chroma embedding extras unavailable; install the 'openai' extra to enable embeddings."
+            )
             return None
 
         provider = embedding_cfg.provider.lower()
@@ -232,11 +232,13 @@ class ChromaMemoryStore:
                 return None
 
             try:
-                return chroma_embeddings.AzureOpenAIEmbeddingFunction(
-                    deployment_name=deployment_name,
+                return chroma_embeddings.OpenAIEmbeddingFunction(
                     api_key=api_key,
                     api_base=api_base.rstrip("/"),
+                    api_type="azure",
                     api_version=api_version,
+                    deployment=deployment_name,
+                    model_name=embedding_cfg.model,
                 )
             except Exception as exc:  # pragma: no cover - runtime failure
                 self._logger.error(
