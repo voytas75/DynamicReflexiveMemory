@@ -5,6 +5,8 @@ Updates:
         scaffold with retries and telemetry hooks.
     v0.2 - 2025-11-06 - Wired provider credential handling for Azure and Ollama.
     v0.3 - 2025-11-06 - Integrated controller bias into workflow selection metadata.
+    v0.4 - 2025-11-07 - Enabled optional LiteLLM debug toggling from configuration.
+    v0.5 - 2025-11-07 - Normalised Azure provider routing for LiteLLM compatibility.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import time
 from os import getenv
 from typing import Any, Dict, Mapping, Optional, Tuple, cast
 
-from config.settings import AppConfig
+from config.settings import AppConfig, WorkflowModelConfig
 from core.controller import SelfAdjustingController
 from core.exceptions import WorkflowError
 from models.workflows import TaskRequest, TaskResult, WorkflowSelection
@@ -40,6 +42,7 @@ class TaskExecutor:
         self._config = config
         self._logger = LOGGER
         self._controller = controller
+        self._activate_litellm_debug()
 
     def select_workflow(self, requested: Optional[str] = None) -> WorkflowSelection:
         """Select the best workflow given request metadata."""
@@ -124,6 +127,7 @@ class TaskExecutor:
         workflow_cfg = workflows[request.workflow]
         timeout_cfg = self._config.llm.timeouts
         provider_kwargs = self._build_provider_kwargs(workflow_cfg.provider)
+        model_identifier = self._resolve_model_name(workflow_cfg)
 
         attempt = 0
         delay = timeout_cfg.retry_backoff_seconds
@@ -136,7 +140,7 @@ class TaskExecutor:
                     "Executing workflow '%s' attempt %s", request.workflow, attempt
                 )
                 response = litellm.completion(
-                    model=workflow_cfg.model,
+                    model=model_identifier,
                     messages=[
                         {"role": "system", "content": request.context.get("system", "")},
                         {"role": "user", "content": request.prompt},
@@ -195,10 +199,13 @@ class TaskExecutor:
                     "Azure OpenAI credentials missing. Set AZURE_OPENAI_API_KEY and "
                     "AZURE_OPENAI_ENDPOINT environment variables."
                 )
+            base = endpoint.rstrip("/")
             return {
                 "api_key": api_key,
-                "base_url": endpoint.rstrip("/"),
+                "api_base": base,
+                "base_url": base,
                 "api_version": api_version,
+                "custom_llm_provider": "azure",
             }
 
         if provider.lower() == "ollama":
@@ -217,3 +224,34 @@ class TaskExecutor:
             else:
                 redacted[key] = value
         return redacted
+
+    def _activate_litellm_debug(self) -> None:
+        """Enable LiteLLM debug logging when requested via configuration."""
+        if not self._config.llm.enable_debug:
+            return
+
+        if litellm is None:
+            self._logger.warning(
+                "LiteLLM debug requested but the library is not installed."
+            )
+            return
+
+        debug_hook = getattr(litellm, "_turn_on_debug", None)
+        if callable(debug_hook):
+            debug_hook()
+            self._logger.info("LiteLLM debug logging enabled.")
+        else:
+            self._logger.warning(
+                "LiteLLM debug requested but '_turn_on_debug' is unavailable on the library."
+            )
+
+    def _resolve_model_name(self, workflow_cfg: WorkflowModelConfig) -> str:
+        """Normalise provider-specific model identifiers for LiteLLM."""
+        model_name = workflow_cfg.model
+        if workflow_cfg.provider.lower() != "azure":
+            return model_name
+
+        if model_name.startswith("azure/"):
+            return model_name
+
+        return f"azure/{model_name}"

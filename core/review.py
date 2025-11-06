@@ -4,6 +4,9 @@ Updates:
     v0.1 - 2025-11-06 - Added ReviewEngine with optional LiteLLM-based automated audits and structured review records.
     v0.2 - 2025-11-06 - Expanded automated review rubric and context framing.
     v0.3 - 2025-11-07 - Parsed automated review verdict, score, and suggestions into structured fields.
+    v0.4 - 2025-11-07 - Honoured LiteLLM debug toggle for automated reviews.
+    v0.5 - 2025-11-07 - Normalised metadata serialisation for automated review payloads.
+    v0.6 - 2025-11-07 - Applied provider-aware routing for automated review models.
 """
 
 from __future__ import annotations
@@ -13,7 +16,8 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence, Tuple, cast
+from os import getenv
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from config.settings import AppConfig
 from core.exceptions import ReviewError
@@ -45,6 +49,7 @@ class ReviewEngine:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._logger = LOGGER
+        self._activate_litellm_debug()
 
     def perform_review(
         self,
@@ -106,19 +111,21 @@ class ReviewEngine:
 
         try:
             self._logger.debug("Running automated review with model %s", model)
+            model_name, provider_kwargs = self._resolve_model_configuration()
+            payload = {
+                "task_prompt": request.prompt,
+                "workflow": request.workflow,
+                "context": self._to_json_safe(request.context),
+                "result": result.content,
+                "metadata": self._to_json_safe(result.metadata),
+            }
             review_payload = json.dumps(
-                {
-                    "task_prompt": request.prompt,
-                    "workflow": request.workflow,
-                    "context": request.context,
-                    "result": result.content,
-                    "metadata": result.metadata,
-                },
+                payload,
                 ensure_ascii=False,
                 indent=2,
             )
             response = litellm.completion(
-                model=model,
+                model=model_name,
                 messages=[
                     {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
                     {
@@ -132,6 +139,7 @@ class ReviewEngine:
                 ],
                 temperature=0.0,
                 request_timeout=self._config.llm.timeouts.request_seconds,
+                **provider_kwargs,
             )
             auto_notes = response["choices"][0]["message"]["content"]
             parsed = self._parse_automated_review(auto_notes)
@@ -177,6 +185,88 @@ class ReviewEngine:
         if verdict in {"fail", "failed", "reject"}:
             return "fail-auto"
         return verdict
+
+    def _activate_litellm_debug(self) -> None:
+        """Enable LiteLLM debug logging for automated review when configured."""
+        if not self._config.llm.enable_debug:
+            return
+
+        if litellm is None:
+            self._logger.warning(
+                "LiteLLM debug requested for reviews but the library is not installed."
+            )
+            return
+
+        debug_hook = getattr(litellm, "_turn_on_debug", None)
+        if callable(debug_hook):
+            debug_hook()
+            self._logger.info("LiteLLM debug logging enabled for review engine.")
+        else:
+            self._logger.warning(
+                "LiteLLM debug requested but '_turn_on_debug' is unavailable on the library."
+            )
+
+    @staticmethod
+    def _to_json_safe(value: Any) -> Any:
+        """Convert the value into JSON-serialisable primitives."""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+
+        if isinstance(value, Mapping):
+            return {str(key): ReviewEngine._to_json_safe(item) for key, item in value.items()}
+
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return [ReviewEngine._to_json_safe(item) for item in value]
+
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return ReviewEngine._to_json_safe(model_dump())
+
+        if hasattr(value, "__dict__"):
+            return ReviewEngine._to_json_safe(vars(value))
+
+        return str(value)
+
+    def _resolve_model_configuration(self) -> Tuple[str, Dict[str, object]]:
+        """Return the provider-aware model identifier and kwargs for LiteLLM."""
+        model_name = self._config.review.auto_reviewer_model
+        if not model_name:
+            raise ReviewError("Automated review model is not configured.")
+
+        provider = self._config.review.auto_reviewer_provider
+        if not provider:
+            default = self._config.llm.default_workflow
+            default_cfg = self._config.llm.workflows.get(default)
+            provider = default_cfg.provider if default_cfg else None
+
+        if not provider:
+            return model_name, {}
+
+        provider_lower = provider.lower()
+        if provider_lower == "azure":
+            api_key = getenv("AZURE_OPENAI_API_KEY")
+            endpoint = getenv("AZURE_OPENAI_ENDPOINT")
+            api_version = getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+            if not api_key or not endpoint:
+                raise ReviewError(
+                    "Azure OpenAI credentials missing for automated review."
+                )
+            base = endpoint.rstrip("/")
+            if not model_name.startswith("azure/"):
+                model_name = f"azure/{model_name}"
+            return model_name, {
+                "api_key": api_key,
+                "api_base": base,
+                "base_url": base,
+                "api_version": api_version,
+                "custom_llm_provider": "azure",
+            }
+
+        if provider_lower == "ollama":
+            base_url = getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            return model_name, {"base_url": base_url.rstrip("/")}
+
+        return model_name, {}
 
     def _parse_automated_review(self, content: str) -> "AutomatedReview":
         lines = [line.rstrip() for line in content.splitlines()]

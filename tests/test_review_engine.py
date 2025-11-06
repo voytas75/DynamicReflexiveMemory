@@ -55,6 +55,7 @@ def test_parse_automated_review_structured_fields(tmp_path: Path) -> None:
 def test_live_task_loop_persists_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = _load_sample_config(tmp_path)
     config.review.auto_reviewer_model = "review-stub"
+    config.review.auto_reviewer_provider = "ollama"
     config.llm.workflows["fast"].provider = "ollama"
     config.llm.workflows["fast"].model = "stub-fast-model"
 
@@ -126,3 +127,62 @@ def test_live_task_loop_persists_artifacts(tmp_path: Path, monkeypatch: pytest.M
 
     working_items = loop._memory_manager.list_working_items()
     assert any(item.key.endswith(":result") for item in working_items)
+
+
+def test_to_json_safe_serialises_usage_objects() -> None:
+    payload = {
+        "usage": SimpleNamespace(total_tokens=42, prompt_tokens=10),
+        "sequence": [SimpleNamespace(value="a")],
+        "primitive": "ok",
+    }
+    safe = ReviewEngine._to_json_safe(payload)
+    assert safe == {
+        "usage": {"total_tokens": 42, "prompt_tokens": 10},
+        "sequence": [{"value": "a"}],
+        "primitive": "ok",
+    }
+
+
+def test_resolve_model_configuration_uses_azure_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = settings.AppConfig.model_validate(
+        {
+            "version": "0.1",
+            "llm": {
+                "default_workflow": "fast",
+                "workflows": {
+                    "fast": {
+                        "provider": "azure",
+                        "model": "gpt-4.1",
+                        "temperature": 0.2,
+                    }
+                },
+                "timeouts": {
+                    "request_seconds": 10,
+                    "retry_attempts": 1,
+                    "retry_backoff_seconds": 1,
+                },
+                "enable_debug": False,
+            },
+            "memory": {
+                "redis": {"host": "localhost", "port": 6379, "db": 0, "ttl_seconds": 120},
+                "chromadb": {"persist_directory": "data/chromadb", "collection": "test"},
+            },
+            "review": {
+                "enabled": True,
+                "auto_reviewer_model": "gpt-4.1",
+                "auto_reviewer_provider": None,
+            },
+            "embedding": None,
+            "telemetry": {"log_level": "INFO"},
+        }
+    )
+
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+
+    engine = ReviewEngine(config)
+    model_name, kwargs = engine._resolve_model_configuration()
+    assert model_name == "azure/gpt-4.1"
+    assert kwargs["custom_llm_provider"] == "azure"
+    assert kwargs["api_base"] == "https://example.openai.azure.com"

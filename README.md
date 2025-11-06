@@ -49,6 +49,11 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
     and optionally `AZURE_OPENAI_API_VERSION`.
   - Ollama: override `OLLAMA_BASE_URL` when running a remote instance.
   - Missing credentials cause a descriptive `WorkflowError` to surface.
+- Enable LiteLLM debugging by setting `llm.enable_debug` to `true` in the
+  configuration when deeper request/response tracing is needed.
+- Automated review can use a distinct provider by setting
+  `review.auto_reviewer_provider`; if omitted it inherits the default workflow's
+  provider.
 - Embeddings (default: Azure OpenAI `text-embedding-3-large`):
   - Set `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` if your embedding deployment name
     differs from the model identifier.

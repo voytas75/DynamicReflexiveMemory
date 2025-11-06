@@ -1,6 +1,9 @@
 """Helpers for loading and validating DRM configuration files.
 
-Updates: v0.1 - 2025-11-06 - Added Pydantic-based loader for core configuration.
+Updates:
+    v0.1 - 2025-11-06 - Added Pydantic-based loader for core configuration.
+    v0.2 - 2025-11-07 - Added LiteLLM debug toggle to LLM configuration schema.
+    v0.3 - 2025-11-07 - Added review model provider overrides.
 """
 
 from __future__ import annotations
@@ -44,6 +47,10 @@ class LLMConfig(BaseModel):
     default_workflow: str = Field(..., min_length=1)
     workflows: Dict[str, WorkflowModelConfig]
     timeouts: WorkflowTimeoutConfig
+    enable_debug: bool = Field(
+        False,
+        description="Turn on LiteLLM's verbose debug logging across workflows.",
+    )
 
     @model_validator(mode="after")
     def _ensure_default_present(self) -> "LLMConfig":
@@ -85,6 +92,13 @@ class ReviewConfig(BaseModel):
     auto_reviewer_model: Optional[str] = Field(
         default=None,
         description="Model identifier used for automated audits.",
+    )
+    auto_reviewer_provider: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional provider override for the automated review model; defaults "
+            "to the application's default workflow provider."
+        ),
     )
 
 
