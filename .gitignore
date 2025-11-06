@@ -58,7 +58,7 @@ examples/
 .roo/
 *.lock
 AGENTS.md
-drmblueprint.txt
+drmblueprint.md
 .coverage
 .mypy_cache/
 .nox/
