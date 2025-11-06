@@ -12,7 +12,7 @@ import os
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from config.settings import AppConfig
 from core.exceptions import MemoryError
@@ -42,6 +42,11 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover - handled gracefully
     chromadb = None
     chroma_embeddings = None
+
+try:  # pragma: no cover - optional dependency
+    from openai import AzureOpenAI  # type: ignore
+except ImportError:  # pragma: no cover
+    AzureOpenAI = None
 
 LOGGER = logging.getLogger("drm.memory")
 
@@ -199,59 +204,95 @@ class ChromaMemoryStore:
         if embedding_cfg is None:
             return None
 
+        provider = embedding_cfg.provider.lower()
+        if provider == "azure":
+            return self._build_azure_embedding_function(embedding_cfg)
+
         if chroma_embeddings is None:
             self._logger.warning(
                 "Chroma embedding extras unavailable; install the 'openai' extra to enable embeddings."
             )
             return None
 
-        provider = embedding_cfg.provider.lower()
-        if provider == "azure":
-            api_key = os.getenv("AZURE_OPENAI_API_KEY")
-            api_base = os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv(
-                "AZURE_OPENAI_API_BASE"
-            )
-            api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
-            deployment_name = os.getenv(
-                "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", embedding_cfg.model
-            )
-
-            missing = [
-                name
-                for name, value in [
-                    ("AZURE_OPENAI_API_KEY", api_key),
-                    ("AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_BASE", api_base),
-                ]
-                if not value
-            ]
-            if missing:
-                self._logger.warning(
-                    "Azure embedding credentials missing (%s); using in-memory store.",
-                    ", ".join(missing),
-                )
-                return None
-
-            try:
-                return chroma_embeddings.OpenAIEmbeddingFunction(
-                    api_key=api_key,
-                    api_base=api_base.rstrip("/"),
-                    api_type="azure",
-                    api_version=api_version,
-                    deployment=deployment_name,
-                    model_name=embedding_cfg.model,
-                )
-            except Exception as exc:  # pragma: no cover - runtime failure
-                self._logger.error(
-                    "Failed to initialise Azure embedding function (%s); "
-                    "falling back to in-memory store.",
-                    exc,
-                )
-                return None
-
         self._logger.warning(
             "Embedding provider '%s' not supported; using in-memory store.", provider
         )
         return None
+
+    def _build_azure_embedding_function(self, embedding_cfg) -> Optional[object]:
+        """Return an embedding function compatible with Azure OpenAI."""
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv(
+            "AZURE_OPENAI_API_BASE"
+        )
+        api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+        deployment_name = os.getenv(
+            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", embedding_cfg.model
+        )
+
+        missing = [
+            name
+            for name, value in [
+                ("AZURE_OPENAI_API_KEY", api_key),
+                ("AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_BASE", endpoint),
+            ]
+            if not value
+        ]
+        if missing:
+            self._logger.warning(
+                "Azure embedding credentials missing (%s); using in-memory store.",
+                ", ".join(missing),
+            )
+            return None
+
+        if AzureOpenAI is None:
+            self._logger.warning(
+                "openai Azure client unavailable; install the 'openai' package to enable embeddings."
+            )
+            return None
+
+        try:
+            client = AzureOpenAI(
+                api_key=api_key,
+                api_version=api_version,
+                azure_endpoint=endpoint.rstrip("/"),
+            )
+        except Exception as exc:  # pragma: no cover
+            self._logger.error(
+                "Failed to initialise Azure OpenAI client (%s); falling back to in-memory store.",
+                exc,
+            )
+            return None
+
+        class AzureEmbeddingFunction:
+            """Callable embedding function compatible with Chroma."""
+
+            def __init__(self, azure_client: "AzureOpenAI", deployment: str) -> None:
+                self._client = azure_client
+                self._deployment = deployment
+
+            def __call__(self, input: Sequence[str]) -> List[List[float]]:  # type: ignore[override]
+                return self._embed(list(input))
+
+            def embed_query(self, text: str) -> List[float]:
+                return self._embed([text])[0]
+
+            def embed_documents(self, input: Sequence[str]) -> List[List[float]]:
+                return self._embed(list(input))
+
+            def _embed(self, texts: Sequence[str]) -> List[List[float]]:
+                try:
+                    response = self._client.embeddings.create(
+                        model=self._deployment,
+                        input=list(texts),
+                    )
+                    return [item.embedding for item in response.data]
+                except Exception as exc:  # pragma: no cover
+                    raise MemoryError(
+                        f"Azure embedding request failed: {exc}"
+                    ) from exc
+
+        return AzureEmbeddingFunction(client, deployment_name)
 
     def _store_in_collection(self, layer: str, entry_id: str, payload: dict) -> None:
         """Store data either via ChromaDB or fallback map."""
