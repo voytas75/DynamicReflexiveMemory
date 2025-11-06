@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from config.settings import AppConfig
@@ -20,6 +22,14 @@ from models.memory import (
     SemanticNode,
     WorkingMemoryItem,
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CHROMA_CACHE = PROJECT_ROOT / "data" / "chromadb" / "cache"
+try:
+    DEFAULT_CHROMA_CACHE.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("CHROMA_CACHE_DIR", str(DEFAULT_CHROMA_CACHE))
+except OSError:
+    pass
 
 try:  # pragma: no cover - optional dependency
     import redis  # type: ignore
@@ -150,13 +160,26 @@ class ChromaMemoryStore:
                 "ChromaDB client unavailable; persisting memory in process only."
             )
             return
+        try:
+            persist_path = Path(self._persist_directory)
+            persist_path.mkdir(parents=True, exist_ok=True)
+            cache_dir = persist_path / "cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("CHROMA_CACHE_DIR", str(cache_dir))
+        except OSError as exc:
+            self._logger.error(
+                "Failed to prepare Chroma directories (%s); falling back to in-memory store.",
+                exc,
+            )
+            return
 
         try:  # pragma: no cover - needs chromadb runtime
             self._client = chromadb.PersistentClient(
                 path=self._persist_directory  # type: ignore[arg-type]
             )
             self._collection = self._client.get_or_create_collection(
-                name=self._collection_name
+                name=self._collection_name,
+                embedding_function=None,
             )
         except Exception as exc:
             self._logger.error(
@@ -174,10 +197,18 @@ class ChromaMemoryStore:
         try:  # pragma: no cover - depends on chromadb
             self._collection.upsert(
                 ids=[f"{layer}:{entry_id}"],
-                documents=[json.dumps(payload)],
+                documents=[json.dumps(payload, default=str)],
                 metadatas=[{"layer": layer}],
             )
         except Exception as exc:
+            message = str(exc).lower()
+            if "permission" in message or "embedding function" in message:
+                self._logger.warning(
+                    "ChromaDB unavailable (%s); reverting to in-memory store.", exc
+                )
+                self._collection = None
+                self._fallback[layer][entry_id] = payload
+                return
             raise MemoryError(
                 f"Failed to persist {layer} memory entry {entry_id}: {exc}"
             ) from exc
