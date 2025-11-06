@@ -15,6 +15,8 @@ to deliver continuity between reasoning sessions.
 
 ## Getting Started
 
+The project targets **Python 3.12**. Create a virtual environment with that interpreter before installing dependencies.
+
 1. **Install dependencies**
 
    ```bash
