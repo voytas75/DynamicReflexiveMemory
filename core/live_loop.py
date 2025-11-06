@@ -2,13 +2,14 @@
 
 Updates:
     v0.1 - 2025-11-07 - Added LiveTaskLoop to persist task outputs, reviews, and drift advisories.
+    v0.2 - 2025-11-07 - Normalised hydrated timestamps to timezone-aware UTC.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from config.settings import AppConfig
@@ -230,8 +231,8 @@ class LiveTaskLoop:
     def _hydrate_review(self, payload: Dict[str, object]) -> Optional[ReviewRecord]:
         try:
             data = dict(payload)
-            if "created_at" in data and isinstance(data["created_at"], str):
-                data["created_at"] = datetime.fromisoformat(data["created_at"])
+            if "created_at" in data:
+                data["created_at"] = self._coerce_timestamp(data["created_at"])
             data.setdefault("suggestions", [])
             data.setdefault("quality_score", None)
             data.setdefault("auto_verdict", None)
@@ -246,3 +247,16 @@ class LiveTaskLoop:
             self._memory_manager.record_episodic(entry)
         except MemoryError as exc:
             self._logger.error("Failed to persist episodic memory %s: %s", entry.id, exc)
+
+    @staticmethod
+    def _coerce_timestamp(value: object) -> datetime:
+        """Convert timestamps to timezone-aware UTC values."""
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                return datetime.now(timezone.utc)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc)

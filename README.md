@@ -74,10 +74,12 @@ entries. Re-run to append additional samples.
 The PySide6 dashboard displays:
 
 - Workflow selector and task input wired to the LiveTaskLoop for launching runs without leaving the GUI.
+- Background task execution keeps the interface responsive while runs progress, showing live status updates.
 - Live memory slices (working, episodic, semantic, review) pulled via
   `MemoryManager`.
 - Latest drift advisory from the self-adjusting controller plus history pulled
   from working memory keys.
+- Tabbed panels for recent outputs and review history so you can inspect results and audits side-by-side.
 - Manual refresh button to inspect updates after CLI or automated runs.
 
 ## Roadmap

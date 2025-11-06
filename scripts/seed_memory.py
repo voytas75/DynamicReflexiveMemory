@@ -1,14 +1,15 @@
 """Populate the memory stores with sample DRM entries for demos.
 
-Updates: v0.1 - 2025-11-06 - Added seeding script for working, episodic,
-semantic, and review memories.
+Updates:
+    v0.1 - 2025-11-06 - Added seeding script for working, episodic, semantic, and review memories.
+    v0.2 - 2025-11-07 - Normalised seeded timestamps to timezone-aware UTC.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 from uuid import uuid4
@@ -32,7 +33,7 @@ def seed_memory(config_path: Path | None = None) -> None:
         key=f"demo-task-{seed_id}",
         payload={
             "objective": "Demonstrate DRM memory seeding.",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         },
         ttl_seconds=config.memory.redis.ttl_seconds,
     )
@@ -112,4 +113,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

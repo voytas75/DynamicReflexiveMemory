@@ -1,7 +1,8 @@
 """Hybrid memory manager combining Redis and ChromaDB layers.
 
-Updates: v0.1 - 2025-11-06 - Implemented Redis/ChromaDB memory scaffolding with
-graceful fallbacks for development environments.
+Updates:
+    v0.1 - 2025-11-06 - Implemented Redis/ChromaDB memory scaffolding with graceful fallbacks for development environments.
+    v0.2 - 2025-11-07 - Normalised timestamps to timezone-aware UTC handling.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import json
 import logging
 import os
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -111,9 +112,7 @@ class RedisMemoryStore:
                     key=data["key"],
                     payload=data["payload"],
                     ttl_seconds=data["ttl_seconds"],
-                    created_at=datetime.fromisoformat(data["created_at"])
-                    if data.get("created_at")
-                    else datetime.utcnow(),
+                    created_at=self._coerce_timestamp(data.get("created_at")),
                 )
             return self._fallback.get(key)
         except Exception as exc:  # pragma: no cover
@@ -134,15 +133,26 @@ class RedisMemoryStore:
                             key=key.decode("utf-8") if isinstance(key, bytes) else str(key),
                             payload=data["payload"],
                             ttl_seconds=data["ttl_seconds"],
-                            created_at=datetime.fromisoformat(data["created_at"])
-                            if data.get("created_at")
-                            else datetime.utcnow(),
+                            created_at=self._coerce_timestamp(data.get("created_at")),
                         )
                     )
                 return items
             return list(self._fallback.values())
         except Exception as exc:  # pragma: no cover
             raise MemoryError(f"Failed to enumerate working memory: {exc}") from exc
+
+    @staticmethod
+    def _coerce_timestamp(value: Optional[object]) -> datetime:
+        """Coerce stored timestamps into timezone-aware datetimes."""
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                return datetime.now(timezone.utc)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc)
 
 
 class ChromaMemoryStore:
