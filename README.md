@@ -30,7 +30,6 @@ to deliver continuity between reasoning sessions.
    ```
 
    - Redis (port 6379) persists working memory.
-   - ChromaDB (port 8000) stores episodic, semantic, and review embeddings.
 
 3. **Launch the app**
 
@@ -84,6 +83,6 @@ The PySide6 dashboard displays:
 
 ## Roadmap
 
-1. Implement Redis and ChromaDB integration tests with docker-compose fixtures.
+1. Implement Redis integration tests with docker-compose fixtures.
 2. Expand GUI to display live memory metrics and review history.
 3. Add persistence and analytics for drift detection outcomes.

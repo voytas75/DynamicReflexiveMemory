@@ -3,6 +3,7 @@
 Updates:
     v0.1 - 2025-11-06 - Added seeding script for working, episodic, semantic, and review memories.
     v0.2 - 2025-11-07 - Normalised seeded timestamps to timezone-aware UTC.
+    v0.3 - 2025-11-07 - Clarified dependency on in-process ChromaDB package (no Docker service).
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ LOGGER = logging.getLogger("drm.seed")
 
 
 def seed_memory(config_path: Path | None = None) -> None:
-    """Insert sample memory objects into Redis and ChromaDB layers."""
+    """Insert sample memory objects into Redis and embedded ChromaDB layers."""
     config = get_app_config(config_path)
     manager = MemoryManager(config)
 

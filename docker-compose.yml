@@ -9,14 +9,3 @@ services:
     volumes:
       - ./data/redis:/data
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
-
-  chromadb:
-    image: ghcr.io/chroma-core/chroma:0.5.4
-    container_name: drm-chromadb
-    environment:
-      - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_HTTP_PORT=8000
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data/chromadb:/chroma/chroma
