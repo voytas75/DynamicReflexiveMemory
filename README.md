@@ -1,7 +1,6 @@
-# Prompt Manager — Dynamic Reflexive Memory Core
+# Dynamic Reflexive Memory Core
 
-Dynamic Reflexive Memory (DRM) evolves the original Prompt Manager application
-into an adaptive memory substrate for LLM workflows. The system blends short-
+Dynamic Reflexive Memory (DRM) evolves into an adaptive memory substrate for LLM workflows. The system blends short-
 term Redis state, long-term ChromaDB embeddings, and reflective review cycles
 to deliver continuity between reasoning sessions.
 
@@ -74,9 +73,11 @@ entries. Re-run to append additional samples.
 
 The PySide6 dashboard displays:
 
+- Workflow selector and task input wired to the LiveTaskLoop for launching runs without leaving the GUI.
 - Live memory slices (working, episodic, semantic, review) pulled via
   `MemoryManager`.
-- Latest drift advisory from the self-adjusting controller.
+- Latest drift advisory from the self-adjusting controller plus history pulled
+  from working memory keys.
 - Manual refresh button to inspect updates after CLI or automated runs.
 
 ## Roadmap
