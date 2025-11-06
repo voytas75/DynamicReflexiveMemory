@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Dict, List
 
 import pytest
 
@@ -16,7 +17,15 @@ from core.live_loop import LiveTaskLoop
 from core.review import ReviewEngine
 
 
-def _load_sample_config(tmp_path: Path):
+def _entry_has_user_task(entry: Dict[str, object], expected: str) -> bool:
+    metadata = entry.get("metadata")
+    if isinstance(metadata, dict):
+        user_task = metadata.get("user_task")
+        return isinstance(user_task, str) and user_task == expected
+    return False
+
+
+def _load_sample_config(tmp_path: Path) -> settings.AppConfig:
     source = Path(__file__).resolve().parent.parent / "config" / "config.json"
     config_path = tmp_path / "config.json"
     config_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
@@ -49,7 +58,11 @@ def test_live_task_loop_persists_artifacts(tmp_path: Path, monkeypatch: pytest.M
     config.llm.workflows["fast"].provider = "ollama"
     config.llm.workflows["fast"].model = "stub-fast-model"
 
-    def _dummy_completion(model: str, messages, **kwargs):
+    def _dummy_completion(
+        model: str,
+        messages: List[Dict[str, str]],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
         system = messages[0]["content"] if messages else ""
         if "DRM audit agent" in system:
             return {
@@ -92,16 +105,23 @@ def test_live_task_loop_persists_artifacts(tmp_path: Path, monkeypatch: pytest.M
     assert outcome.drift_advisory is None
 
     episodic_entries = loop._memory_manager.list_layer("episodic")
-    assert any(entry.get("metadata", {}).get("user_task") == "Draft integration plan for QA." for entry in episodic_entries)
+    assert any(
+        _entry_has_user_task(entry, "Draft integration plan for QA.")
+        for entry in episodic_entries
+    )
 
     review_records = loop._memory_manager.list_layer("review")
     assert review_records, "Expected persisted review records."
     stored_review = review_records[-1]
-    assert stored_review.get("quality_score") == pytest.approx(0.95)
-    assert stored_review.get("suggestions") == ["Keep monitoring latency."]
+    quality_value = stored_review.get("quality_score")
+    assert isinstance(quality_value, (int, float))
+    assert quality_value == pytest.approx(0.95)
+    suggestions_value = stored_review.get("suggestions")
+    assert isinstance(suggestions_value, list)
+    assert suggestions_value == ["Keep monitoring latency."]
 
     semantic_nodes = loop._memory_manager.list_layer("semantic")
-    concept_ids = {node.get("id") for node in semantic_nodes}
+    concept_ids = {str(node.get("id", "")) for node in semantic_nodes}
     assert any(id_.startswith("concept:") for id_ in concept_ids)
 
     working_items = loop._memory_manager.list_working_items()

@@ -11,16 +11,17 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, TYPE_CHECKING, cast
 
 from config.settings import AppConfig
 from core.controller import SelfAdjustingController
 from core.exceptions import DRMError, MemoryError, WorkflowError
 from core.live_loop import LiveTaskLoop
 from core.memory_manager import MemoryManager
+from models.memory import WorkingMemoryItem
 from models.workflows import TaskRunOutcome
 
-try:  # pragma: no cover - optional dependency
+if TYPE_CHECKING:  # pragma: no cover - typing-only imports
     from PySide6.QtCore import QObject, QThread, Signal, Slot
     from PySide6.QtWidgets import (
         QApplication,
@@ -35,8 +36,152 @@ try:  # pragma: no cover - optional dependency
         QVBoxLayout,
         QWidget,
     )
-except ImportError:  # pragma: no cover
-    QApplication = None  # type: ignore[assignment]
+else:  # pragma: no cover - runtime optional dependency
+    try:
+        from PySide6.QtCore import QObject, QThread, Signal, Slot
+        from PySide6.QtWidgets import (
+            QApplication,
+            QComboBox,
+            QHBoxLayout,
+            QLabel,
+            QMessageBox,
+            QPlainTextEdit,
+            QPushButton,
+            QTabWidget,
+            QTextEdit,
+            QVBoxLayout,
+            QWidget,
+        )
+    except ImportError:
+        QApplication = None
+
+        class QObject:
+            def __init__(self, *_: Any, **__: Any) -> None:
+                pass
+
+        class QThread:
+            def __init__(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def start(self) -> None:
+                raise RuntimeError("PySide6 is required for GUI operation")
+
+            def isRunning(self) -> bool:  # pragma: no cover - stub
+                return False
+
+            def quit(self) -> None:
+                pass
+
+            def deleteLater(self) -> None:
+                pass
+
+            @property
+            def finished(self) -> "Signal":  # pragma: no cover - stub accessor
+                return Signal()
+
+        class Signal:
+            def __init__(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def connect(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def emit(self, *_: Any, **__: Any) -> None:
+                pass
+
+        def Slot(*_args: Any, **_kwargs: Any):
+            def decorator(func: Any) -> Any:
+                return func
+
+            return decorator
+
+        class QWidget:
+            def __init__(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def show(self) -> None:
+                pass
+
+        class QLabel(QWidget):
+            def setWordWrap(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def setText(self, *_: Any, **__: Any) -> None:
+                pass
+
+        class QHBoxLayout:
+            def __init__(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def addWidget(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def addLayout(self, *_: Any, **__: Any) -> None:
+                pass
+
+        class QVBoxLayout(QHBoxLayout):
+            pass
+
+        class QComboBox(QWidget):
+            def setEditable(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def addItem(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def currentData(self) -> Any:
+                return None
+
+            def setEnabled(self, *_: Any, **__: Any) -> None:
+                pass
+
+        class QPlainTextEdit(QWidget):
+            def setPlaceholderText(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def setFixedHeight(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def toPlainText(self) -> str:
+                return ""
+
+            def clear(self) -> None:
+                pass
+
+            def setEnabled(self, *_: Any, **__: Any) -> None:
+                pass
+
+        class QTextEdit(QPlainTextEdit):
+            def setReadOnly(self, *_: Any, **__: Any) -> None:
+                pass
+
+        class QPushButton(QWidget):
+            def __init__(self, *_: Any, **__: Any) -> None:
+                self.clicked = Signal()
+
+        class QTabWidget(QWidget):
+            def addTab(self, *_: Any, **__: Any) -> None:
+                pass
+
+        class QMessageBox:
+            @staticmethod
+            def information(*_: Any, **__: Any) -> None:
+                pass
+
+            @staticmethod
+            def warning(*_: Any, **__: Any) -> None:
+                pass
+
+            @staticmethod
+            def critical(*_: Any, **__: Any) -> None:
+                pass
+
+        class QApplication:
+            def __init__(self, *_: Any, **__: Any) -> None:
+                raise RuntimeError("PySide6 is required for GUI operation")
+
+            def exec(self) -> int:  # pragma: no cover - stub
+                return 0
 
 LOGGER = logging.getLogger("drm.gui")
 
@@ -119,7 +264,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._task_input.setFixedHeight(80)
 
         run_button = QPushButton("Run Task")
-        run_button.clicked.connect(self._handle_run_task)  # type: ignore[arg-type]
+        cast(Any, run_button.clicked).connect(self._handle_run_task)
         self._run_button = run_button
         controls_row.addWidget(run_button)
 
@@ -153,7 +298,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         layout.addWidget(self._bias_label)
 
         refresh_button = QPushButton("Refresh Memory Snapshot")
-        refresh_button.clicked.connect(self._refresh_memory_snapshot)  # type: ignore[arg-type]
+        cast(Any, refresh_button.clicked).connect(self._refresh_memory_snapshot)
         layout.addWidget(refresh_button)
 
         self._refresh_memory_snapshot()
@@ -182,14 +327,14 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         worker = TaskExecutionWorker(self._task_loop, task_text, workflow)
         thread = QThread(self)
         worker.moveToThread(thread)
-        thread.started.connect(worker.run)  # type: ignore[attr-defined]
-        worker.finished.connect(self._on_task_finished)  # type: ignore[arg-type]
-        worker.failed.connect(self._on_task_failed)  # type: ignore[arg-type]
-        worker.finished.connect(thread.quit)  # type: ignore[attr-defined]
-        worker.failed.connect(thread.quit)  # type: ignore[attr-defined]
-        worker.finished.connect(worker.deleteLater)  # type: ignore[attr-defined]
-        worker.failed.connect(worker.deleteLater)  # type: ignore[attr-defined]
-        thread.finished.connect(thread.deleteLater)  # type: ignore[attr-defined]
+        cast(Any, thread.started).connect(worker.run)
+        cast(Any, worker.finished).connect(self._on_task_finished)
+        cast(Any, worker.failed).connect(self._on_task_failed)
+        cast(Any, worker.finished).connect(thread.quit)
+        cast(Any, worker.failed).connect(thread.quit)
+        cast(Any, worker.finished).connect(worker.deleteLater)
+        cast(Any, worker.failed).connect(worker.deleteLater)
+        cast(Any, thread.finished).connect(thread.deleteLater)
 
         self._current_worker = worker
         self._worker_thread = thread
@@ -243,7 +388,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             self._review_history_view.setPlainText(f"Unable to load review history: {exc}")
             return
 
-        drift_items = [item for item in working_items if item.key.endswith(":drift")]
+        drift_items: List[WorkingMemoryItem] = [
+            item for item in working_items if item.key.endswith(":drift")
+        ]
         drift_summary = self._format_drift_summary(drift_items)
         self._update_review_history_view(reviews)
 
@@ -265,16 +412,17 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._bias_label.setText(self._format_bias_summary(self._controller.workflow_biases))
 
     @staticmethod
-    def _format_working_item(item) -> str:
+    @staticmethod
+    def _format_working_item(item: WorkingMemoryItem) -> str:
         return f"{item.key}: {item.payload} (ttl={item.ttl_seconds}s)"
 
     @staticmethod
-    def _format_generic_item(item: dict) -> str:
+    def _format_generic_item(item: Dict[str, object]) -> str:
         identifier = item.get("id", "unknown")
         content = item.get("content") or item.get("definition") or item
         return f"{identifier}: {content}"
 
-    def _format_drift_summary(self, items) -> str:
+    def _format_drift_summary(self, items: Sequence[WorkingMemoryItem]) -> str:
         if not items:
             return "<b>Drift Advisories:</b> None recorded."
         latest = max(items, key=lambda entry: entry.created_at)
@@ -284,7 +432,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         )
 
     @staticmethod
-    def _format_bias_summary(biases: dict[str, float]) -> str:
+    def _format_bias_summary(biases: Mapping[str, float]) -> str:
         if not biases:
             return "<b>Controller Biases:</b> None."
         segments = [f"{name}: {value:+.2f}" for name, value in sorted(biases.items())]
@@ -316,7 +464,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             )
         self._recent_output_view.setPlainText("\n".join(lines))
 
-    def _update_review_history_view(self, reviews: Optional[List[dict]] = None) -> None:
+    def _update_review_history_view(
+        self, reviews: Optional[List[Dict[str, object]]] = None
+    ) -> None:
         """Render review history in the dedicated view."""
         if reviews is None:
             try:
@@ -330,7 +480,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             self._review_history_view.setPlainText("No review records yet.")
             return
 
-        def _parse_timestamp(payload: dict) -> datetime:
+        def _parse_timestamp(payload: Dict[str, object]) -> datetime:
             value = payload.get("created_at")
             if isinstance(value, datetime):
                 return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
@@ -343,17 +493,24 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             return datetime.now(timezone.utc)
 
         sorted_records = sorted(reviews, key=_parse_timestamp, reverse=True)[:5]
-        lines = []
+        lines: List[str] = []
         for record in sorted_records:
-            notes = record.get("notes") or "n/a"
+            notes_raw = record.get("notes")
+            notes = str(notes_raw) if notes_raw is not None else "n/a"
             quality = record.get("quality_score")
             quality_text = f"{quality:.2f}" if isinstance(quality, (int, float)) else "n/a"
-            suggestions = record.get("suggestions") or []
-            suggestions_text = "; ".join(suggestions) if suggestions else "None"
+            suggestions_value = record.get("suggestions")
+            if isinstance(suggestions_value, list) and suggestions_value:
+                suggestions_text = "; ".join(str(item) for item in suggestions_value)
+            else:
+                suggestions_text = "None"
+            created_at_display = record.get("created_at", "unknown")
+            verdict_display = record.get("verdict", "n/a")
+            auto_display = record.get("auto_verdict", "n/a")
             lines.append(
                 (
-                    f"{record.get('created_at', 'unknown')} | verdict={record.get('verdict')} "
-                    f"(auto={record.get('auto_verdict')})\n"
+                    f"{created_at_display} | verdict={verdict_display} "
+                    f"(auto={auto_display})\n"
                     f"quality={quality_text} | suggestions={suggestions_text}\n"
                     f"notes: {notes}\n"
                 )

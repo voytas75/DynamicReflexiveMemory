@@ -12,7 +12,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional, cast
+from uuid import uuid4
 
 from config.settings import AppConfig
 from core.controller import SelfAdjustingController
@@ -34,8 +35,8 @@ LOGGER = logging.getLogger("drm.loop")
 
 @dataclass(slots=True)
 class _LayerSnapshot:
-    episodic: List[dict]
-    semantic: List[dict]
+    episodic: List[Dict[str, object]]
+    semantic: List[Dict[str, object]]
     reviews: List[ReviewRecord]
 
 
@@ -75,12 +76,15 @@ class LiveTaskLoop:
             context=request_context,
         )
         working_key_prefix = f"task:{request.task_id}"
-        working_payload = {
-            "task": task,
-            "requested_workflow": workflow_override or "auto",
-            "selected_workflow": selection.workflow,
-            "selection_rationale": selection.rationale,
-        }
+        working_payload = cast(
+            Dict[str, object],
+            {
+                "task": task,
+                "requested_workflow": workflow_override or "auto",
+                "selected_workflow": selection.workflow,
+                "selection_rationale": selection.rationale,
+            },
+        )
         self._store_working_item(
             key=f"{working_key_prefix}:context",
             payload=working_payload,
@@ -130,11 +134,14 @@ class LiveTaskLoop:
         if drift_advisory:
             self._persist_drift_advisory(request.task_id, selection.workflow, drift_advisory)
 
-        result_payload = {
-            "workflow": result.workflow,
-            "latency_seconds": result.latency_seconds,
-            "metadata": result.metadata,
-        }
+        result_payload = cast(
+            Dict[str, object],
+            {
+                "workflow": result.workflow,
+                "latency_seconds": result.latency_seconds,
+                "metadata": result.metadata,
+            },
+        )
         self._store_working_item(
             key=f"{working_key_prefix}:result",
             payload=result_payload,
@@ -157,13 +164,16 @@ class LiveTaskLoop:
         compiled_prompt: str,
         user_task: str,
     ) -> None:
-        metadata = {
-            "compiled_prompt": compiled_prompt,
-            "user_task": user_task,
-            "workflow": selection.workflow,
-            "latency_seconds": result.latency_seconds,
-            "metadata": result.metadata,
-        }
+        metadata = cast(
+            Dict[str, object],
+            {
+                "compiled_prompt": compiled_prompt,
+                "user_task": user_task,
+                "workflow": selection.workflow,
+                "latency_seconds": result.latency_seconds,
+                "metadata": result.metadata,
+            },
+        )
         entry = EpisodicMemoryEntry(
             id=request.task_id,
             content=result.content,
@@ -230,20 +240,25 @@ class LiveTaskLoop:
     def _persist_drift_advisory(
         self, task_id: str, workflow: str, advisory: str
     ) -> None:
-        metadata = {
-            "task_reference": task_id,
-            "workflow": workflow,
-            "type": "drift_advisory",
-        }
+        metadata = cast(
+            Dict[str, object],
+            {
+                "task_reference": task_id,
+                "workflow": workflow,
+                "type": "drift_advisory",
+            },
+        )
         entry = EpisodicMemoryEntry(
             id=f"drift:{task_id}",
             content=advisory,
             metadata=metadata,
         )
         self._safe_record_episodic(entry)
+        drift_payload: Dict[str, object] = dict(metadata)
+        drift_payload["advisory"] = advisory
         self._store_working_item(
             key=f"task:{task_id}:drift",
-            payload=metadata | {"advisory": advisory},
+            payload=drift_payload,
         )
 
     def _store_working_item(self, key: str, payload: Dict[str, object]) -> None:
@@ -263,7 +278,7 @@ class LiveTaskLoop:
         reviews = self._load_recent_reviews(limit)
         return _LayerSnapshot(episodic=episodic, semantic=semantic, reviews=reviews)
 
-    def _safe_layer_slice(self, layer: str, limit: int) -> List[dict]:
+    def _safe_layer_slice(self, layer: str, limit: int) -> List[Dict[str, object]]:
         try:
             items = self._memory_manager.list_layer(layer)
         except MemoryError as exc:
@@ -273,7 +288,9 @@ class LiveTaskLoop:
             return []
         sorted_items = sorted(
             items,
-            key=lambda item: item.get("timestamp") or item.get("created_at") or "",
+            key=lambda item: self._coerce_timestamp(
+                item.get("timestamp") or item.get("created_at")
+            ),
         )
         return sorted_items[-limit:]
 
@@ -286,21 +303,43 @@ class LiveTaskLoop:
         hydrated: List[ReviewRecord] = []
         for payload in items:
             record = self._hydrate_review(payload)
-            if record:
+            if record is not None:
                 hydrated.append(record)
         hydrated.sort(key=lambda record: record.created_at)
         return hydrated[-limit:]
 
     def _hydrate_review(self, payload: Dict[str, object]) -> Optional[ReviewRecord]:
         try:
-            data = dict(payload)
-            if "created_at" in data:
-                data["created_at"] = self._coerce_timestamp(data["created_at"])
-            data.setdefault("suggestions", [])
-            data.setdefault("quality_score", None)
-            data.setdefault("auto_verdict", None)
-            data.setdefault("notes", None)
-            return ReviewRecord(**data)
+            created_at = self._coerce_timestamp(payload.get("created_at"))
+            suggestions_raw = payload.get("suggestions", [])
+            if isinstance(suggestions_raw, list):
+                suggestions = [str(item) for item in suggestions_raw]
+            else:
+                suggestions = []
+
+            quality_raw = payload.get("quality_score")
+            quality_score = float(quality_raw) if isinstance(quality_raw, (int, float)) else None
+
+            notes_raw = payload.get("notes")
+            notes = str(notes_raw) if notes_raw is not None else None
+
+            auto_verdict_raw = payload.get("auto_verdict")
+            auto_verdict = str(auto_verdict_raw) if auto_verdict_raw is not None else None
+
+            review_id = str(payload.get("id") or f"hydrated:{uuid4().hex}")
+            task_reference = str(payload.get("task_reference") or "unknown")
+            verdict = str(payload.get("verdict") or "unknown")
+
+            return ReviewRecord(
+                id=review_id,
+                task_reference=task_reference,
+                verdict=verdict,
+                notes=notes,
+                quality_score=quality_score,
+                suggestions=suggestions,
+                auto_verdict=auto_verdict,
+                created_at=created_at,
+            )
         except Exception as exc:  # pragma: no cover - defensive path
             self._logger.debug("Failed to hydrate review payload %s: %s", payload, exc)
             return None

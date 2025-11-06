@@ -11,7 +11,7 @@ import logging
 import os
 from importlib import metadata
 from pathlib import Path
-from typing import List
+from typing import Any, List, cast
 
 from config.settings import AppConfig
 from core.exceptions import HealthCheckError
@@ -33,14 +33,14 @@ def run_startup_checks(config: AppConfig) -> List[str]:
 
 def _check_redis(config: AppConfig) -> List[str]:
     try:
-        import redis  # type: ignore
+        import redis as redis_module
     except ImportError:
         return [
             "redis client not installed; using in-memory working memory fallback.",
         ]
 
     redis_cfg = config.memory.redis
-    client = redis.Redis(  # type: ignore[attr-defined]
+    client = cast(Any, redis_module).Redis(
         host=redis_cfg.host,
         port=redis_cfg.port,
         db=redis_cfg.db,
@@ -55,7 +55,7 @@ def _check_redis(config: AppConfig) -> List[str]:
 
 def _check_chromadb(config: AppConfig) -> List[str]:
     try:
-        import chromadb  # type: ignore
+        import chromadb as chromadb_module
     except ImportError:
         return [
             "chromadb not installed; long-term memory will not persist between runs.",
@@ -65,7 +65,7 @@ def _check_chromadb(config: AppConfig) -> List[str]:
     persist_dir = Path(chroma_cfg.persist_directory)
     try:
         persist_dir.mkdir(parents=True, exist_ok=True)
-        client = chromadb.PersistentClient(path=str(persist_dir))  # type: ignore[attr-defined]
+        client = cast(Any, chromadb_module).PersistentClient(path=str(persist_dir))
         client.list_collections()
     except Exception as exc:  # pragma: no cover - runtime dependent
         raise HealthCheckError(f"ChromaDB availability check failed: {exc}") from exc
@@ -74,7 +74,7 @@ def _check_chromadb(config: AppConfig) -> List[str]:
 
 def _check_litellm() -> List[str]:
     try:
-        import litellm  # noqa: F401  # type: ignore
+        import litellm  # noqa: F401
     except ImportError:
         raise HealthCheckError("litellm is required for workflow execution but is missing.")
 

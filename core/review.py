@@ -13,7 +13,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple, cast
 
 from config.settings import AppConfig
 from core.exceptions import ReviewError
@@ -21,9 +21,11 @@ from models.memory import ReviewRecord
 from models.workflows import TaskRequest, TaskResult
 
 try:  # pragma: no cover - optional dependency
-    import litellm  # type: ignore
+    import litellm as _litellm
 except ImportError:  # pragma: no cover
-    litellm = None
+    _litellm = None
+
+litellm = cast(Any, _litellm)
 
 LOGGER = logging.getLogger("drm.review")
 
@@ -115,7 +117,7 @@ class ReviewEngine:
                 ensure_ascii=False,
                 indent=2,
             )
-            response = litellm.completion(  # type: ignore[attr-defined]
+            response = litellm.completion(
                 model=model,
                 messages=[
                     {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
@@ -134,7 +136,7 @@ class ReviewEngine:
             auto_notes = response["choices"][0]["message"]["content"]
             parsed = self._parse_automated_review(auto_notes)
             return parsed
-        except litellm.Timeout as exc:  # type: ignore[attr-defined]
+        except litellm.Timeout as exc:
             self._logger.warning("Automated review timeout: %s", exc)
             return AutomatedReview(
                 verdict="timeout",

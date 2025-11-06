@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import time
 from os import getenv
-from typing import Optional
+from typing import Any, Dict, Mapping, Optional, Tuple, cast
 
 from config.settings import AppConfig
 from core.controller import SelfAdjustingController
@@ -20,9 +20,11 @@ from core.exceptions import WorkflowError
 from models.workflows import TaskRequest, TaskResult, WorkflowSelection
 
 try:  # pragma: no cover - optional dependency
-    import litellm  # type: ignore
+    import litellm as _litellm
 except ImportError:  # pragma: no cover
-    litellm = None
+    _litellm = None
+
+litellm = cast(Any, _litellm)
 
 LOGGER = logging.getLogger("drm.executor")
 
@@ -43,7 +45,10 @@ class TaskExecutor:
         """Select the best workflow given request metadata."""
         workflows = self._config.llm.workflows
         fallback = self._config.llm.default_workflow
-        chosen = requested or fallback
+        if requested is not None:
+            chosen = requested
+        else:
+            chosen = fallback
         rationale = (
             "Requested workflow"
             if requested and chosen == requested
@@ -60,21 +65,31 @@ class TaskExecutor:
             rationale = "Fallback to default configuration"
 
         if self._controller and not requested:
-            bias_choice, bias_reason = self._apply_controller_bias(chosen, workflows)
+            biases = self._controller.workflow_biases
+            bias_choice, bias_reason = self._apply_controller_bias(chosen, workflows, biases)
             if bias_choice != chosen:
                 chosen = bias_choice
-                rationale = bias_reason
+                rationale = bias_reason or "Controller preference override"
             elif bias_reason:
                 rationale = f"{rationale} ({bias_reason})"
 
         score = 0.8 if chosen == fallback else 1.0
-        metadata = {}
-        if self._controller:
-            metadata["biases"] = self._controller.workflow_biases
-        return WorkflowSelection(workflow=chosen, rationale=rationale, score=score, metadata=metadata)
+        metadata: Dict[str, object] = {}
+        if self._controller and not requested:
+            metadata["biases"] = dict(self._controller.workflow_biases)
+        return WorkflowSelection(
+            workflow=chosen,
+            rationale=rationale,
+            score=score,
+            metadata=metadata,
+        )
 
-    def _apply_controller_bias(self, current: str, workflows: dict) -> tuple[str, Optional[str]]:
-        biases = self._controller.workflow_biases
+    def _apply_controller_bias(
+        self,
+        current: str,
+        workflows: Mapping[str, object],
+        biases: Mapping[str, float],
+    ) -> Tuple[str, Optional[str]]:
         if not biases:
             return current, None
 
@@ -120,7 +135,7 @@ class TaskExecutor:
                 self._logger.debug(
                     "Executing workflow '%s' attempt %s", request.workflow, attempt
                 )
-                response = litellm.completion(  # type: ignore[attr-defined]
+                response = litellm.completion(
                     model=workflow_cfg.model,
                     messages=[
                         {"role": "system", "content": request.context.get("system", "")},
@@ -132,7 +147,7 @@ class TaskExecutor:
                 )
                 content = response["choices"][0]["message"]["content"]
                 latency = time.perf_counter() - start_time
-                metadata = {
+                metadata: Dict[str, object] = {
                     "usage": response.get("usage", {}),
                     "provider": workflow_cfg.provider,
                     "attempts": attempt,
@@ -144,7 +159,7 @@ class TaskExecutor:
                     latency_seconds=latency,
                     metadata=metadata,
                 )
-            except litellm.Timeout as exc:  # type: ignore[attr-defined]
+            except litellm.Timeout as exc:
                 self._logger.warning(
                     "Workflow '%s' timed out (attempt %s): %s",
                     request.workflow,
@@ -166,10 +181,10 @@ class TaskExecutor:
         latency = time.perf_counter() - start_time
         message = f"Workflow '{request.workflow}' failed after {attempt} attempts."
         if "last_exc" in locals():
-            raise WorkflowError(message) from last_exc  # type: ignore[misc]
+            raise WorkflowError(message) from last_exc
         raise WorkflowError(message)
 
-    def _build_provider_kwargs(self, provider: str) -> dict:
+    def _build_provider_kwargs(self, provider: str) -> Dict[str, object]:
         """Prepare provider-specific keyword arguments for LiteLLM."""
         if provider.lower() == "azure":
             api_key = getenv("AZURE_OPENAI_API_KEY")
@@ -193,9 +208,9 @@ class TaskExecutor:
         return {}
 
     @staticmethod
-    def _redact_sensitive(payload: dict) -> dict:
+    def _redact_sensitive(payload: Dict[str, object]) -> Dict[str, object]:
         """Redact known sensitive values before logging metadata."""
-        redacted = {}
+        redacted: Dict[str, object] = {}
         for key, value in payload.items():
             if "key" in key.lower():
                 redacted[key] = "***redacted***"

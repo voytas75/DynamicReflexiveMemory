@@ -13,9 +13,9 @@ import os
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, cast
 
-from config.settings import AppConfig
+from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import MemoryError
 from models.memory import (
     EpisodicMemoryEntry,
@@ -32,22 +32,28 @@ try:
 except OSError:
     pass
 
-try:  # pragma: no cover - optional dependency
-    import redis  # type: ignore
-except ImportError:  # pragma: no cover - handled gracefully
-    redis = None
+redis_module: Any
+chromadb_module: Any
+chroma_embeddings_module: Any
 
 try:  # pragma: no cover - optional dependency
-    import chromadb  # type: ignore
-    from chromadb.utils import embedding_functions as chroma_embeddings  # type: ignore
+    import redis as redis_module
 except ImportError:  # pragma: no cover - handled gracefully
-    chromadb = None
-    chroma_embeddings = None
+    redis_module = None
 
 try:  # pragma: no cover - optional dependency
-    from openai import AzureOpenAI  # type: ignore
+    import chromadb as chromadb_module
+    from chromadb.utils import embedding_functions as chroma_embeddings_module
+except ImportError:  # pragma: no cover - handled gracefully
+    chromadb_module = None
+    chroma_embeddings_module = None
+
+try:  # pragma: no cover - optional dependency
+    from openai import AzureOpenAI as _AzureOpenAI
 except ImportError:  # pragma: no cover
-    AzureOpenAI = None
+    _AzureOpenAI = None
+
+AzureOpenAI = cast(Any, _AzureOpenAI)
 
 LOGGER = logging.getLogger("drm.memory")
 
@@ -61,17 +67,17 @@ class RedisMemoryStore:
         self._port = redis_cfg.port
         self._db = redis_cfg.db
         self._ttl_seconds = redis_cfg.ttl_seconds
-        self._client: Optional["redis.Redis"] = None
+        self._client: Optional[Any] = None
         self._fallback: Dict[str, WorkingMemoryItem] = {}
         self._logger = logging.getLogger("drm.memory.redis")
 
-        if redis is None:
+        if redis_module is None:
             self._logger.warning(
                 "Redis python client unavailable; using in-memory fallback store."
             )
         else:
             try:
-                self._client = redis.Redis(
+                self._client = redis_module.Redis(
                     host=self._host,
                     port=self._port,
                     db=self._db,
@@ -104,14 +110,18 @@ class RedisMemoryStore:
         """Retrieve an item from working memory."""
         try:
             if self._client:
-                payload = self._client.get(key)
-                if payload is None:
+                payload_bytes = self._client.get(key)
+                if payload_bytes is None:
                     return None
-                data = json.loads(payload)
+                data = cast(Dict[str, object], json.loads(payload_bytes.decode("utf-8")))
+                key_value = str(data.get("key", ""))
+                payload_value = cast(Dict[str, object], data.get("payload", {}))
+                ttl_value_raw = data.get("ttl_seconds", self._ttl_seconds)
+                ttl_value = int(ttl_value_raw) if isinstance(ttl_value_raw, (int, float)) else self._ttl_seconds
                 return WorkingMemoryItem(
-                    key=data["key"],
-                    payload=data["payload"],
-                    ttl_seconds=data["ttl_seconds"],
+                    key=key_value,
+                    payload=payload_value,
+                    ttl_seconds=ttl_value,
                     created_at=self._coerce_timestamp(data.get("created_at")),
                 )
             return self._fallback.get(key)
@@ -124,15 +134,21 @@ class RedisMemoryStore:
             if self._client:
                 items: List[WorkingMemoryItem] = []
                 for key in self._client.scan_iter(match=pattern):
-                    payload = self._client.get(key)
-                    if not payload:
+                    payload_bytes = self._client.get(key)
+                    if not payload_bytes:
                         continue
-                    data = json.loads(payload)
+                    data = cast(Dict[str, object], json.loads(payload_bytes.decode("utf-8")))
+                    key_value = (
+                        key.decode("utf-8") if isinstance(key, bytes) else str(key)
+                    )
+                    payload_value = cast(Dict[str, object], data.get("payload", {}))
+                    ttl_raw = data.get("ttl_seconds", self._ttl_seconds)
+                    ttl_value = int(ttl_raw) if isinstance(ttl_raw, (int, float)) else self._ttl_seconds
                     items.append(
                         WorkingMemoryItem(
-                            key=key.decode("utf-8") if isinstance(key, bytes) else str(key),
-                            payload=data["payload"],
-                            ttl_seconds=data["ttl_seconds"],
+                            key=key_value,
+                            payload=payload_value,
+                            ttl_seconds=ttl_value,
                             created_at=self._coerce_timestamp(data.get("created_at")),
                         )
                     )
@@ -164,16 +180,16 @@ class ChromaMemoryStore:
         self._collection_name = chroma_cfg.collection
         self._logger = logging.getLogger("drm.memory.chroma")
 
-        self._client = None
-        self._collection = None
-        self._fallback: Dict[str, Dict[str, dict]] = {
+        self._client: Optional[Any] = None
+        self._collection: Optional[Any] = None
+        self._fallback: Dict[str, Dict[str, Dict[str, object]]] = {
             "episodic": {},
             "semantic": {},
             "review": {},
         }
-        self._embedding_fn = None
+        self._embedding_fn: Optional[Any] = None
 
-        if chromadb is None:
+        if chromadb_module is None:
             self._logger.warning(
                 "ChromaDB client unavailable; persisting memory in process only."
             )
@@ -194,12 +210,12 @@ class ChromaMemoryStore:
         self._embedding_fn = self._build_embedding_function(config)
 
         try:  # pragma: no cover - needs chromadb runtime
-            self._client = chromadb.PersistentClient(
-                path=self._persist_directory  # type: ignore[arg-type]
+            self._client = chromadb_module.PersistentClient(
+                path=self._persist_directory
             )
             self._collection = self._client.get_or_create_collection(
                 name=self._collection_name,
-                embedding_function=self._embedding_fn,
+                embedding_function=cast(Any, self._embedding_fn),
             )
         except Exception as exc:
             self._logger.error(
@@ -208,7 +224,7 @@ class ChromaMemoryStore:
             )
             self._client = None
 
-    def _build_embedding_function(self, config: AppConfig):
+    def _build_embedding_function(self, config: AppConfig) -> Optional[object]:
         """Construct the embedding function if configuration allows."""
         embedding_cfg = config.embedding
         if embedding_cfg is None:
@@ -218,7 +234,7 @@ class ChromaMemoryStore:
         if provider == "azure":
             return self._build_azure_embedding_function(embedding_cfg)
 
-        if chroma_embeddings is None:
+        if chroma_embeddings_module is None:
             self._logger.warning(
                 "Chroma embedding extras unavailable; install the 'openai' extra to enable embeddings."
             )
@@ -229,7 +245,9 @@ class ChromaMemoryStore:
         )
         return None
 
-    def _build_azure_embedding_function(self, embedding_cfg) -> Optional[object]:
+    def _build_azure_embedding_function(
+        self, embedding_cfg: EmbeddingConfig
+    ) -> Optional[object]:
         """Return an embedding function compatible with Azure OpenAI."""
         api_key = os.getenv("AZURE_OPENAI_API_KEY")
         endpoint = os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv(
@@ -255,6 +273,9 @@ class ChromaMemoryStore:
             )
             return None
 
+        if endpoint is None:
+            return None
+
         if AzureOpenAI is None:
             self._logger.warning(
                 "openai Azure client unavailable; install the 'openai' package to enable embeddings."
@@ -262,10 +283,11 @@ class ChromaMemoryStore:
             return None
 
         try:
+            endpoint_str = endpoint.rstrip("/")
             client = AzureOpenAI(
                 api_key=api_key,
                 api_version=api_version,
-                azure_endpoint=endpoint.rstrip("/"),
+                azure_endpoint=endpoint_str,
             )
         except Exception as exc:  # pragma: no cover
             self._logger.error(
@@ -277,11 +299,11 @@ class ChromaMemoryStore:
         class AzureEmbeddingFunction:
             """Callable embedding function compatible with Chroma."""
 
-            def __init__(self, azure_client: "AzureOpenAI", deployment: str) -> None:
+            def __init__(self, azure_client: Any, deployment: str) -> None:
                 self._client = azure_client
                 self._deployment = deployment
 
-            def __call__(self, input: Sequence[str]) -> List[List[float]]:  # type: ignore[override]
+            def __call__(self, input: Sequence[str]) -> List[List[float]]:
                 return self._embed(list(input))
 
             def embed_query(self, text: str) -> List[float]:
@@ -304,7 +326,9 @@ class ChromaMemoryStore:
 
         return AzureEmbeddingFunction(client, deployment_name)
 
-    def _store_in_collection(self, layer: str, entry_id: str, payload: dict) -> None:
+    def _store_in_collection(
+        self, layer: str, entry_id: str, payload: Dict[str, object]
+    ) -> None:
         """Store data either via ChromaDB or fallback map."""
         if self._collection is None:  # fallback path
             self._fallback[layer][entry_id] = payload
@@ -341,7 +365,7 @@ class ChromaMemoryStore:
         """Persist a review record entry."""
         self._store_in_collection("review", record.id, asdict(record))
 
-    def list_layer(self, layer: str) -> List[dict]:
+    def list_layer(self, layer: str) -> List[Dict[str, object]]:
         """Return layer payloads from the available store."""
         if self._collection is None:
             return list(self._fallback[layer].values())
@@ -351,8 +375,12 @@ class ChromaMemoryStore:
                 where={"layer": layer},
                 include=["documents"],
             )
-            documents = query.get("documents", [])
-            return [json.loads(doc) for doc in documents]
+            documents = query.get("documents") or []
+            parsed: List[Dict[str, object]] = []
+            for doc in documents:
+                if isinstance(doc, str):
+                    parsed.append(cast(Dict[str, object], json.loads(doc)))
+            return parsed
         except Exception as exc:
             raise MemoryError(f"Failed to query {layer} memory: {exc}") from exc
 
@@ -390,7 +418,7 @@ class MemoryManager:
         self._logger.debug("Recording review %s", record.id)
         self._chroma_store.add_review(record)
 
-    def list_layer(self, layer: str) -> List[dict]:
+    def list_layer(self, layer: str) -> List[Dict[str, object]]:
         """List stored items for the requested layer."""
         if layer not in {"episodic", "semantic", "review"}:
             raise MemoryError(f"Unsupported memory layer requested: {layer}")

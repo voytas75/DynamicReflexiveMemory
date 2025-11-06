@@ -50,7 +50,7 @@ def _build_chroma_stub(tmp_path: Path) -> types.SimpleNamespace:
         def __init__(self, path: str) -> None:
             self._path = path
 
-        def list_collections(self):  # pragma: no cover - empty stub
+        def list_collections(self) -> list[object]:  # pragma: no cover - empty stub
             return []
 
     return types.SimpleNamespace(PersistentClient=_Client)

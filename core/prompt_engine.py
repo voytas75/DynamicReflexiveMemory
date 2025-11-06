@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from textwrap import dedent
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from config.settings import AppConfig
 from models.memory import ReviewRecord
@@ -24,8 +24,8 @@ class PromptContext:
     task: str
     workflow: str
     working_memory: Dict[str, object]
-    episodic_memory: List[dict]
-    semantic_memory: List[dict]
+    episodic_memory: Sequence[Dict[str, object]]
+    semantic_memory: Sequence[Dict[str, object]]
     recent_reviews: List[ReviewRecord]
     drift_indicator: Optional[str] = None
 
@@ -88,7 +88,9 @@ class AdaptivePromptEngine:
         ).strip()
 
     @staticmethod
-    def _format_list_section(title: str, items: List[dict]) -> str:
+    def _format_list_section(
+        title: str, items: Sequence[Dict[str, object]]
+    ) -> str:
         if not items:
             return ""
         formatted_items = "\n".join(
