@@ -4,6 +4,7 @@ Updates:
     v0.1 - 2025-11-06 - Implemented minimal GUI window with runtime diagnostics and graceful fallback when PySide6 is unavailable.
     v0.2 - 2025-11-06 - Added memory snapshots and drift advisory display.
     v0.3 - 2025-11-07 - Integrated LiveTaskLoop with interactive task execution and drift advisory history.
+    v0.4 - 2025-11-06 - Surfaced controller workflow biases in the telemetry panel.
 """
 
 from __future__ import annotations
@@ -147,6 +148,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._drift_label.setWordWrap(True)
         layout.addWidget(self._drift_label)
 
+        self._bias_label = QLabel("Controller biases: none recorded.")
+        self._bias_label.setWordWrap(True)
+        layout.addWidget(self._bias_label)
+
         refresh_button = QPushButton("Refresh Memory Snapshot")
         refresh_button.clicked.connect(self._refresh_memory_snapshot)  # type: ignore[arg-type]
         layout.addWidget(refresh_button)
@@ -257,6 +262,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._memory_view.setPlainText("\n".join(lines))
 
         self._drift_label.setText(drift_summary)
+        self._bias_label.setText(self._format_bias_summary(self._controller.workflow_biases))
 
     @staticmethod
     def _format_working_item(item) -> str:
@@ -276,6 +282,13 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             f"<b>Drift Advisories:</b> {len(items)} recorded. "
             f"Latest ({latest.created_at.isoformat()}): {latest.payload.get('advisory')}"
         )
+
+    @staticmethod
+    def _format_bias_summary(biases: dict[str, float]) -> str:
+        if not biases:
+            return "<b>Controller Biases:</b> None."
+        segments = [f"{name}: {value:+.2f}" for name, value in sorted(biases.items())]
+        return "<b>Controller Biases:</b> " + ", ".join(segments)
 
     def _render_recent_outputs(self) -> None:
         """Render recent task outcomes in the dedicated view."""

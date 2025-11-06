@@ -59,6 +59,12 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
 pytest
 ```
 
+## CI & Quality Checks
+
+- `pytest` executes the regression suite; GitHub Actions workflow `.github/workflows/ci.yml` runs it on every push/PR.
+- `mypy .` enforces the strict type configuration defined in `pyproject.toml`.
+- Extend the workflow with additional linters (e.g., `ruff`, `black`) as the codebase grows.
+
 ## Memory Seeding
 
 Populate demo data to exercise the GUI and review pipelines:
