@@ -1,13 +1,16 @@
 """LLM workflow executor with LiteLLM routing.
 
-Updates: v0.1 - 2025-11-06 - Added workflow selection heuristic and LiteLLM
-integration scaffold with retries and telemetry hooks.
+Updates:
+    v0.1 - 2025-11-06 - Added workflow selection heuristic and LiteLLM integration
+        scaffold with retries and telemetry hooks.
+    v0.2 - 2025-11-06 - Wired provider credential handling for Azure and Ollama.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from os import getenv
 from typing import Optional
 
 from config.settings import AppConfig
@@ -64,6 +67,7 @@ class TaskExecutor:
 
         workflow_cfg = workflows[request.workflow]
         timeout_cfg = self._config.llm.timeouts
+        provider_kwargs = self._build_provider_kwargs(workflow_cfg.provider)
 
         attempt = 0
         delay = timeout_cfg.retry_backoff_seconds
@@ -83,6 +87,7 @@ class TaskExecutor:
                     ],
                     temperature=workflow_cfg.temperature,
                     request_timeout=timeout_cfg.request_seconds,
+                    **provider_kwargs,
                 )
                 content = response["choices"][0]["message"]["content"]
                 latency = time.perf_counter() - start_time
@@ -90,6 +95,7 @@ class TaskExecutor:
                     "usage": response.get("usage", {}),
                     "provider": workflow_cfg.provider,
                     "attempts": attempt,
+                    "provider_kwargs": self._redact_sensitive(provider_kwargs),
                 }
                 return TaskResult(
                     workflow=request.workflow,
@@ -121,3 +127,37 @@ class TaskExecutor:
         if "last_exc" in locals():
             raise WorkflowError(message) from last_exc  # type: ignore[misc]
         raise WorkflowError(message)
+
+    def _build_provider_kwargs(self, provider: str) -> dict:
+        """Prepare provider-specific keyword arguments for LiteLLM."""
+        if provider.lower() == "azure":
+            api_key = getenv("AZURE_OPENAI_API_KEY")
+            endpoint = getenv("AZURE_OPENAI_ENDPOINT")
+            api_version = getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+            if not api_key or not endpoint:
+                raise WorkflowError(
+                    "Azure OpenAI credentials missing. Set AZURE_OPENAI_API_KEY and "
+                    "AZURE_OPENAI_ENDPOINT environment variables."
+                )
+            return {
+                "api_key": api_key,
+                "base_url": endpoint.rstrip("/"),
+                "api_version": api_version,
+            }
+
+        if provider.lower() == "ollama":
+            base_url = getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            return {"base_url": base_url.rstrip("/")}
+
+        return {}
+
+    @staticmethod
+    def _redact_sensitive(payload: dict) -> dict:
+        """Redact known sensitive values before logging metadata."""
+        redacted = {}
+        for key, value in payload.items():
+            if "key" in key.lower():
+                redacted[key] = "***redacted***"
+            else:
+                redacted[key] = value
+        return redacted

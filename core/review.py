@@ -1,7 +1,9 @@
 """Hybrid review engine integrating automated checks.
 
-Updates: v0.1 - 2025-11-06 - Added ReviewEngine with optional LiteLLM-based
-automated audits and structured review records.
+Updates:
+    v0.1 - 2025-11-06 - Added ReviewEngine with optional LiteLLM-based automated
+        audits and structured review records.
+    v0.2 - 2025-11-06 - Expanded automated review rubric and context framing.
 """
 
 from __future__ import annotations
@@ -9,6 +11,8 @@ from __future__ import annotations
 import logging
 import uuid
 from typing import Optional
+
+import json
 
 from config.settings import AppConfig
 from core.exceptions import ReviewError
@@ -21,6 +25,15 @@ except ImportError:  # pragma: no cover
     litellm = None
 
 LOGGER = logging.getLogger("drm.review")
+
+REVIEW_SYSTEM_PROMPT = (
+    "You are the DRM audit agent. Examine task requests and outputs for logic, "
+    "factuality, redundancy, and policy alignment. Respond using the format:\n"
+    "VERDICT: PASS|FAIL\n"
+    "REASONING: <2 sentence justification>\n"
+    "QUALITY_SCORE: <0-1 float>\n"
+    "SUGGESTIONS: bullet list of corrections or improvements."
+)
 
 
 class ReviewEngine:
@@ -69,20 +82,27 @@ class ReviewEngine:
 
         try:
             self._logger.debug("Running automated review with model %s", model)
-            review_prompt = (
-                "You are the DRM audit agent. Assess the following output for "
-                "logical consistency, factual accuracy, and redundancy. "
-                "Respond with PASS or FAIL followed by a short justification."
+            review_payload = json.dumps(
+                {
+                    "task_prompt": request.prompt,
+                    "workflow": request.workflow,
+                    "context": request.context,
+                    "result": result.content,
+                    "metadata": result.metadata,
+                },
+                ensure_ascii=False,
+                indent=2,
             )
             response = litellm.completion(  # type: ignore[attr-defined]
                 model=model,
                 messages=[
-                    {"role": "system", "content": review_prompt},
+                    {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
                     {
                         "role": "user",
                         "content": (
-                            f"Task Prompt:\n{request.prompt}\n\n"
-                            f"Task Result:\n{result.content}"
+                            "Evaluate the provided task exchange. Use the rubric and "
+                            "return a structured audit.\n\n"
+                            f"```json\n{review_payload}\n```"
                         ),
                     },
                 ],

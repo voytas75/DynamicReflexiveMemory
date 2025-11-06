@@ -1,7 +1,9 @@
 """Self-adjustment logic and drift detection for DRM.
 
-Updates: v0.1 - 2025-11-06 - Implemented feedback-driven controller with rolling
-metrics and drift advisories.
+Updates:
+    v0.1 - 2025-11-06 - Implemented feedback-driven controller with rolling metrics
+        and drift advisories.
+    v0.2 - 2025-11-06 - Tracked last advisory for GUI display.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ class SelfAdjustingController:
         self._logger = LOGGER
         self._window_size = window_size
         self._history: Deque[PerformanceSnapshot] = deque(maxlen=window_size)
+        self._last_advisory: Optional[str] = None
 
     def register_result(
         self,
@@ -57,7 +60,9 @@ class SelfAdjustingController:
             snapshot.latency,
             snapshot.verdict,
         )
-        return self._assess_drift()
+        advisory = self._assess_drift()
+        self._last_advisory = advisory
+        return advisory
 
     def _assess_drift(self) -> Optional[str]:
         if len(self._history) < max(3, self._window_size // 2):
@@ -80,3 +85,8 @@ class SelfAdjustingController:
             self._logger.warning(advisory)
             return advisory
         return None
+
+    @property
+    def last_advisory(self) -> Optional[str]:
+        """Return the most recent drift advisory, if any."""
+        return self._last_advisory

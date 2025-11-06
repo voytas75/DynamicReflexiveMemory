@@ -102,6 +102,31 @@ class RedisMemoryStore:
         except Exception as exc:  # pragma: no cover
             raise MemoryError(f"Failed to load working memory item: {exc}") from exc
 
+    def list_items(self, pattern: str = "*") -> List[WorkingMemoryItem]:
+        """Return working memory items matching the given pattern."""
+        try:
+            if self._client:
+                items: List[WorkingMemoryItem] = []
+                for key in self._client.scan_iter(match=pattern):
+                    payload = self._client.get(key)
+                    if not payload:
+                        continue
+                    data = json.loads(payload)
+                    items.append(
+                        WorkingMemoryItem(
+                            key=key.decode("utf-8") if isinstance(key, bytes) else str(key),
+                            payload=data["payload"],
+                            ttl_seconds=data["ttl_seconds"],
+                            created_at=datetime.fromisoformat(data["created_at"])
+                            if data.get("created_at")
+                            else datetime.utcnow(),
+                        )
+                    )
+                return items
+            return list(self._fallback.values())
+        except Exception as exc:  # pragma: no cover
+            raise MemoryError(f"Failed to enumerate working memory: {exc}") from exc
+
 
 class ChromaMemoryStore:
     """Adapter around ChromaDB for episodic, semantic, and review memory."""
@@ -223,3 +248,7 @@ class MemoryManager:
         if layer not in {"episodic", "semantic", "review"}:
             raise MemoryError(f"Unsupported memory layer requested: {layer}")
         return self._chroma_store.list_layer(layer)
+
+    def list_working_items(self, pattern: str = "*") -> List[WorkingMemoryItem]:
+        """List working memory records for UI inspection."""
+        return self._redis_store.list_items(pattern)
