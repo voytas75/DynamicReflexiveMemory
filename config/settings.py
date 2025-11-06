@@ -94,6 +94,13 @@ class TelemetryConfig(BaseModel):
     log_level: str = Field("INFO")
 
 
+class EmbeddingConfig(BaseModel):
+    """Vector embedding provider configuration."""
+
+    provider: str = Field(..., description="Embedding provider identifier, e.g. azure.")
+    model: str = Field(..., description="Embedding model or deployment name.")
+
+
 class AppConfig(BaseModel):
     """Complete application configuration payload."""
 
@@ -101,6 +108,7 @@ class AppConfig(BaseModel):
     llm: LLMConfig
     memory: MemoryConfig
     review: ReviewConfig
+    embedding: Optional[EmbeddingConfig] = None
     telemetry: TelemetryConfig
 
 
@@ -132,4 +140,3 @@ def load_app_config(path: Optional[Path] = None) -> AppConfig:
 def get_app_config(path: Optional[Path] = None) -> AppConfig:
     """Memoised accessor for the application configuration."""
     return load_app_config(path)
-

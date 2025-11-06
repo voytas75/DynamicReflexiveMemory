@@ -38,8 +38,10 @@ except ImportError:  # pragma: no cover - handled gracefully
 
 try:  # pragma: no cover - optional dependency
     import chromadb  # type: ignore
+    from chromadb.utils import embedding_functions as chroma_embeddings  # type: ignore
 except ImportError:  # pragma: no cover - handled gracefully
     chromadb = None
+    chroma_embeddings = None
 
 LOGGER = logging.getLogger("drm.memory")
 
@@ -154,6 +156,7 @@ class ChromaMemoryStore:
             "semantic": {},
             "review": {},
         }
+        self._embedding_fn = None
 
         if chromadb is None:
             self._logger.warning(
@@ -173,13 +176,15 @@ class ChromaMemoryStore:
             )
             return
 
+        self._embedding_fn = self._build_embedding_function(config)
+
         try:  # pragma: no cover - needs chromadb runtime
             self._client = chromadb.PersistentClient(
                 path=self._persist_directory  # type: ignore[arg-type]
             )
             self._collection = self._client.get_or_create_collection(
                 name=self._collection_name,
-                embedding_function=None,
+                embedding_function=self._embedding_fn,
             )
         except Exception as exc:
             self._logger.error(
@@ -187,6 +192,64 @@ class ChromaMemoryStore:
                 exc,
             )
             self._client = None
+
+    def _build_embedding_function(self, config: AppConfig):
+        """Construct the embedding function if configuration allows."""
+        if chroma_embeddings is None:
+            self._logger.warning(
+                "Chroma embedding functions unavailable; install Chroma extras to enable embeddings."
+            )
+            return None
+
+        embedding_cfg = config.embedding
+        if embedding_cfg is None:
+            return None
+
+        provider = embedding_cfg.provider.lower()
+        if provider == "azure":
+            api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            api_base = os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv(
+                "AZURE_OPENAI_API_BASE"
+            )
+            api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+            deployment_name = os.getenv(
+                "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", embedding_cfg.model
+            )
+
+            missing = [
+                name
+                for name, value in [
+                    ("AZURE_OPENAI_API_KEY", api_key),
+                    ("AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_BASE", api_base),
+                ]
+                if not value
+            ]
+            if missing:
+                self._logger.warning(
+                    "Azure embedding credentials missing (%s); using in-memory store.",
+                    ", ".join(missing),
+                )
+                return None
+
+            try:
+                return chroma_embeddings.AzureOpenAIEmbeddingFunction(
+                    deployment_name=deployment_name,
+                    api_key=api_key,
+                    api_base=api_base.rstrip("/"),
+                    api_version=api_version,
+                )
+            except Exception as exc:  # pragma: no cover - runtime failure
+                self._logger.error(
+                    "Failed to initialise Azure embedding function (%s); "
+                    "falling back to in-memory store.",
+                    exc,
+                )
+                return None
+
+        self._logger.warning(
+            "Embedding provider '%s' not supported; using in-memory store.", provider
+        )
+        return None
 
     def _store_in_collection(self, layer: str, entry_id: str, payload: dict) -> None:
         """Store data either via ChromaDB or fallback map."""

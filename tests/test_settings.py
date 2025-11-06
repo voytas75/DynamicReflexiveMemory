@@ -27,6 +27,7 @@ def test_load_app_config(tmp_path: Path) -> None:
             "chromadb": {"persist_directory": "data/chromadb", "collection": "test"},
         },
         "review": {"enabled": True, "auto_reviewer_model": None},
+        "embedding": {"provider": "azure", "model": "text-embedding-3-large"},
         "telemetry": {"log_level": "DEBUG"},
     }
 

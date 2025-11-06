@@ -49,6 +49,9 @@ to deliver continuity between reasoning sessions.
     and optionally `AZURE_OPENAI_API_VERSION`.
   - Ollama: override `OLLAMA_BASE_URL` when running a remote instance.
   - Missing credentials cause a descriptive `WorkflowError` to surface.
+- Embeddings (default: Azure OpenAI `text-embedding-3-large`):
+  - Set `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` if your embedding deployment name
+    differs from the model identifier.
 
 ## Testing
 
