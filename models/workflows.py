@@ -1,7 +1,8 @@
 """Workflow-related data models for LLM task execution.
 
-Updates: v0.1 - 2025-11-06 - Introduced task request/result models and
-workflow selection metadata.
+Updates:
+    v0.1 - 2025-11-06 - Introduced task request/result models and workflow selection metadata.
+    v0.2 - 2025-11-07 - Added TaskRunOutcome summary for live execution loop.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from uuid import uuid4
+
+from models.memory import ReviewRecord
 
 
 @dataclass(slots=True)
@@ -44,3 +47,14 @@ class WorkflowSelection:
     score: float
     timestamp: datetime = field(default_factory=datetime.utcnow)
     metadata: Dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class TaskRunOutcome:
+    """Summarises a single live task execution."""
+
+    selection: WorkflowSelection
+    request: TaskRequest
+    result: TaskResult
+    review: ReviewRecord
+    drift_advisory: Optional[str] = None

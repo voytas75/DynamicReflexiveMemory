@@ -1,7 +1,8 @@
 """Typed data structures representing DRM memory layers.
 
-Updates: v0.1 - 2025-11-06 - Added dataclasses for working, episodic, semantic,
-and review memory records.
+Updates:
+    v0.1 - 2025-11-06 - Added dataclasses for working, episodic, semantic, and review memory records.
+    v0.2 - 2025-11-07 - Added structured review fields for automated audit parsing.
 """
 
 from __future__ import annotations
@@ -51,5 +52,7 @@ class ReviewRecord:
     task_reference: str
     verdict: str
     notes: Optional[str] = None
+    quality_score: Optional[float] = None
+    suggestions: List[str] = field(default_factory=list)
+    auto_verdict: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
-

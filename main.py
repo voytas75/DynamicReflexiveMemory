@@ -1,7 +1,8 @@
 """Entry point for the Dynamic Reflexive Memory application.
 
-Updates: v0.1 - 2025-11-06 - Added CLI/GUI bootstrap with configuration loading,
-logging setup, and sample task execution pipeline.
+Updates:
+    v0.1 - 2025-11-06 - Added CLI/GUI bootstrap with configuration loading, logging setup, and sample task execution pipeline.
+    v0.2 - 2025-11-07 - Routed CLI execution through the LiveTaskLoop orchestrator.
 """
 
 from __future__ import annotations
@@ -13,15 +14,9 @@ from pathlib import Path
 from typing import Optional
 
 from config.settings import AppConfig, get_app_config, resolve_config_path
-from core.controller import SelfAdjustingController
-from core.memory_manager import MemoryManager
-from core.prompt_engine import AdaptivePromptEngine, PromptContext
-from core.review import ReviewEngine
-from core.task_executor import TaskExecutor
 from core.exceptions import DRMError, WorkflowError
+from core.live_loop import LiveTaskLoop
 from gui.app import launch_gui
-from models.memory import WorkingMemoryItem
-from models.workflows import TaskRequest
 
 
 def setup_logging(logging_config: Optional[Path] = None) -> None:
@@ -39,54 +34,42 @@ def setup_logging(logging_config: Optional[Path] = None) -> None:
 def run_cli(config: AppConfig, task: Optional[str] = None, workflow: Optional[str] = None) -> None:
     """Run a simple CLI workflow as a fallback when GUI is unavailable."""
     logger = logging.getLogger("drm.cli")
-    memory_manager = MemoryManager(config)
-    prompt_engine = AdaptivePromptEngine(config)
-    executor = TaskExecutor(config)
-    review_engine = ReviewEngine(config)
-    controller = SelfAdjustingController(config)
-
+    task_loop = LiveTaskLoop(config)
     prompt_text = task or "Summarise today's objectives based on existing memory."
-    selection = executor.select_workflow(workflow)
-    request = TaskRequest(workflow=selection.workflow, prompt=prompt_text)
-
-    # Seed working memory for the prompt context
-    memory_manager.put_working_item(
-        WorkingMemoryItem(
-            key=request.task_id,
-            payload={"task_overview": prompt_text},
-            ttl_seconds=config.memory.redis.ttl_seconds,
-        )
-    )
-
-    prompt_context = PromptContext(
-        task=prompt_text,
-        workflow=selection.workflow,
-        working_memory={"task_overview": prompt_text},
-        episodic_memory=memory_manager.list_layer("episodic") if config.review.enabled else [],
-        semantic_memory=memory_manager.list_layer("semantic") if config.review.enabled else [],
-        recent_reviews=[],
-    )
-    prompt = prompt_engine.build_prompt(prompt_context)
-
-    logger.info("Prepared prompt for workflow %s:\n%s", selection.workflow, prompt)
-
     try:
-        result = executor.execute(request)
-    except WorkflowError as exc:
-        logger.warning(
-            "Workflow execution unavailable: %s. The prompt above can be sent manually.",
-            exc,
+        outcome = task_loop.run_task(
+            task=prompt_text,
+            workflow_override=workflow,
         )
+    except DRMError as exc:
+        if isinstance(exc, WorkflowError):
+            logger.warning(
+                "Workflow execution unavailable: %s. The prompt can be sent manually.",
+                exc,
+            )
+        else:
+            logger.error("Task execution failed: %s", exc)
         return
 
-    review = review_engine.perform_review(request, result)
-    memory_manager.record_review(review)
-    drift_notice = controller.register_result(selection, result, review)
-
-    logger.info("Task result (%s): %s", result.workflow, result.content)
-    logger.info("Review verdict: %s - %s", review.verdict, review.notes)
-    if drift_notice:
-        logger.warning("Controller advisory: %s", drift_notice)
+    logger.info(
+        "Executed workflow '%s' (reason: %s, score=%.2f)",
+        outcome.selection.workflow,
+        outcome.selection.rationale,
+        outcome.selection.score,
+    )
+    logger.info("Compiled prompt:\n%s", outcome.request.prompt)
+    logger.info("Task result (%s): %s", outcome.result.workflow, outcome.result.content)
+    logger.info(
+        "Review verdict: %s (auto=%s, quality=%s)",
+        outcome.review.verdict,
+        outcome.review.auto_verdict,
+        f"{outcome.review.quality_score:.2f}" if outcome.review.quality_score is not None else "n/a",
+    )
+    if outcome.review.suggestions:
+        logger.info("Review suggestions: %s", "; ".join(outcome.review.suggestions))
+    logger.info("Review notes: %s", outcome.review.notes)
+    if outcome.drift_advisory:
+        logger.warning("Controller advisory: %s", outcome.drift_advisory)
 
 
 def main(argv: Optional[list[str]] = None) -> int:

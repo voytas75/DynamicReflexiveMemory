@@ -105,14 +105,21 @@ class AdaptivePromptEngine:
     def _format_reviews(reviews: List[ReviewRecord]) -> str:
         if not reviews:
             return ""
-        formatted = "\n".join(
-            f"- {record.created_at.isoformat()} | {record.verdict}: {record.notes or 'n/a'}"
-            for record in reviews
-        )
+        formatted_lines = []
+        for record in reviews:
+            details = record.notes or "n/a"
+            if record.quality_score is not None:
+                details = f"{details} | quality={record.quality_score:.2f}"
+            if record.suggestions:
+                suggestions = "; ".join(record.suggestions)
+                details = f"{details} | suggestions: {suggestions}"
+            formatted_lines.append(
+                f"- {record.created_at.isoformat()} | {record.verdict}: {details}"
+            )
+        formatted = "\n".join(formatted_lines)
         return dedent(
             f"""
             ### Review Feedback
             {formatted}
             """
         ).strip()
-
