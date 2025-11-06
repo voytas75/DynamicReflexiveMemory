@@ -3,6 +3,8 @@
 Updates:
     v0.1 - 2025-11-07 - Added LiveTaskLoop to persist task outputs, reviews, and drift advisories.
     v0.2 - 2025-11-07 - Normalised hydrated timestamps to timezone-aware UTC.
+    v0.3 - 2025-11-06 - Persisted semantic summaries and integrated controller-aware
+        task selection.
 """
 
 from __future__ import annotations
@@ -19,7 +21,12 @@ from core.memory_manager import MemoryManager
 from core.prompt_engine import AdaptivePromptEngine, PromptContext
 from core.review import ReviewEngine
 from core.task_executor import TaskExecutor
-from models.memory import EpisodicMemoryEntry, ReviewRecord, WorkingMemoryItem
+from models.memory import (
+    EpisodicMemoryEntry,
+    ReviewRecord,
+    SemanticNode,
+    WorkingMemoryItem,
+)
 from models.workflows import TaskRequest, TaskResult, TaskRunOutcome, WorkflowSelection
 
 LOGGER = logging.getLogger("drm.loop")
@@ -47,9 +54,9 @@ class LiveTaskLoop:
         self._config = config
         self._memory_manager = memory_manager or MemoryManager(config)
         self._prompt_engine = prompt_engine or AdaptivePromptEngine(config)
-        self._executor = executor or TaskExecutor(config)
-        self._review_engine = review_engine or ReviewEngine(config)
         self._controller = controller or SelfAdjustingController(config)
+        self._executor = executor or TaskExecutor(config, controller=self._controller)
+        self._review_engine = review_engine or ReviewEngine(config)
         self._logger = LOGGER
 
     def run_task(
@@ -103,6 +110,12 @@ class LiveTaskLoop:
             selection=selection,
             result=result,
             compiled_prompt=prompt,
+            user_task=task,
+        )
+        self._persist_semantic_summary(
+            request=request,
+            selection=selection,
+            result=result,
             user_task=task,
         )
 
@@ -163,6 +176,56 @@ class LiveTaskLoop:
             self._memory_manager.record_review(review)
         except MemoryError as exc:
             self._logger.error("Failed to persist review %s: %s", review.id, exc)
+
+    def _persist_semantic_summary(
+        self,
+        *,
+        request: TaskRequest,
+        selection: WorkflowSelection,
+        result: TaskResult,
+        user_task: str,
+    ) -> None:
+        """Create a lightweight semantic summary node derived from the task outcome."""
+        if not result.content.strip():
+            return
+
+        label = self._build_semantic_label(user_task)
+        definition = self._build_semantic_definition(result)
+        if not definition:
+            return
+
+        node = SemanticNode(
+            id=f"concept:{request.task_id}",
+            label=label,
+            definition=definition,
+            sources=[selection.workflow],
+            relations={f"workflow:{selection.workflow}": selection.score},
+        )
+        try:
+            self._memory_manager.record_semantic(node)
+        except MemoryError as exc:
+            self._logger.error(
+                "Failed to persist semantic concept %s: %s",
+                node.id,
+                exc,
+            )
+
+    @staticmethod
+    def _build_semantic_label(user_task: str) -> str:
+        summary = user_task.strip()
+        if len(summary) <= 80:
+            return summary
+        return f"{summary[:77]}…"
+
+    @staticmethod
+    def _build_semantic_definition(result: TaskResult) -> str:
+        snippet = result.content.strip().splitlines()[0] if result.content.strip() else ""
+        snippet = snippet.strip()
+        if not snippet:
+            return ""
+        if len(snippet) <= 240:
+            return snippet
+        return f"{snippet[:237]}…"
 
     def _persist_drift_advisory(
         self, task_id: str, workflow: str, advisory: str

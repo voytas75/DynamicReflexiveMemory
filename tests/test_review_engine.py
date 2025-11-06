@@ -100,5 +100,9 @@ def test_live_task_loop_persists_artifacts(tmp_path: Path, monkeypatch: pytest.M
     assert stored_review.get("quality_score") == pytest.approx(0.95)
     assert stored_review.get("suggestions") == ["Keep monitoring latency."]
 
+    semantic_nodes = loop._memory_manager.list_layer("semantic")
+    concept_ids = {node.get("id") for node in semantic_nodes}
+    assert any(id_.startswith("concept:") for id_ in concept_ids)
+
     working_items = loop._memory_manager.list_working_items()
     assert any(item.key.endswith(":result") for item in working_items)

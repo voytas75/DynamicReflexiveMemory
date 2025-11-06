@@ -3,6 +3,7 @@
 Updates:
     v0.1 - 2025-11-06 - Added CLI/GUI bootstrap with configuration loading, logging setup, and sample task execution pipeline.
     v0.2 - 2025-11-07 - Routed CLI execution through the LiveTaskLoop orchestrator.
+    v0.3 - 2025-11-06 - Added startup health checks with warning surface.
 """
 
 from __future__ import annotations
@@ -14,8 +15,9 @@ from pathlib import Path
 from typing import Optional
 
 from config.settings import AppConfig, get_app_config, resolve_config_path
-from core.exceptions import DRMError, WorkflowError
+from core.exceptions import DRMError, HealthCheckError, WorkflowError
 from core.live_loop import LiveTaskLoop
+from core.health import run_startup_checks
 from gui.app import launch_gui
 
 
@@ -86,6 +88,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         config_path = resolve_config_path(args.config) if args.config else None
         config = get_app_config(config_path)
         setup_logging(args.logging_config)
+        warnings = run_startup_checks(config)
+        for warning in warnings:
+            logging.getLogger("drm").warning("Startup check: %s", warning)
+    except HealthCheckError as exc:
+        logging.basicConfig(level=logging.ERROR)
+        logging.getLogger("drm").error("Startup health check failed: %s", exc)
+        return 1
     except DRMError as exc:
         logging.basicConfig(level=logging.ERROR)
         logging.getLogger("drm").error("Startup failed: %s", exc)

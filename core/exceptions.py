@@ -29,3 +29,6 @@ class WorkflowError(DRMError):
 class ReviewError(DRMError):
     """Raised when automated or human review processes encounter issues."""
 
+
+class HealthCheckError(DRMError):
+    """Raised when startup health verification fails."""
