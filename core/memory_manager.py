@@ -4,6 +4,8 @@ Updates:
     v0.1 - 2025-11-06 - Implemented Redis/ChromaDB memory scaffolding with graceful fallbacks for development environments.
     v0.2 - 2025-11-07 - Normalised timestamps to timezone-aware UTC handling.
     v0.3 - 2025-11-07 - Added revision logging and history export for memory operations.
+    v0.4 - 2025-11-07 - Added semantic graph utilities and relation management APIs.
+    v0.5 - 2025-11-07 - Instrumented memory operations with telemetry spans and metrics.
 """
 
 from __future__ import annotations
@@ -15,10 +17,11 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional, Sequence, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import MemoryError
+from core.telemetry import emit_metric, log_span
 from models.memory import (
     EpisodicMemoryEntry,
     ReviewRecord,
@@ -61,6 +64,11 @@ LOGGER = logging.getLogger("drm.memory")
 
 REVISION_LOG_ENV = "DRM_MEMORY_LOG_PATH"
 DEFAULT_REVISION_LOG = PROJECT_ROOT / "data" / "logs" / "memory_revisions.jsonl"
+
+SEMANTIC_NODE_PREFIX = "node:"
+MAX_WORKING_MEMORY_ITEMS = 100
+SEMANTIC_RELATION_DECAY = 0.85
+SEMANTIC_RELATION_MIN_THRESHOLD = 0.05
 
 
 class MemoryRevisionLogger:
@@ -206,6 +214,16 @@ class RedisMemoryStore:
             return self._fallback.get(key)
         except Exception as exc:  # pragma: no cover
             raise MemoryError(f"Failed to load working memory item: {exc}") from exc
+
+    def delete(self, key: str) -> None:
+        """Remove an item from working memory if present."""
+        try:
+            if self._client:
+                self._client.delete(key)
+            else:
+                self._fallback.pop(key, None)
+        except Exception as exc:  # pragma: no cover
+            raise MemoryError(f"Failed to delete working memory item: {exc}") from exc
 
     def list_items(self, pattern: str = "*") -> List[WorkingMemoryItem]:
         """Return working memory items matching the given pattern."""
@@ -392,10 +410,21 @@ class ChromaMemoryStore:
                 return self._embed(list(input))
 
             def _embed(self, texts: Sequence[str]) -> List[List[float]]:
+                payload = list(texts)
                 try:
-                    response = self._client.embeddings.create(
-                        model=self._deployment,
-                        input=list(texts),
+                    with log_span(
+                        "embedding.azure",
+                        count=len(payload),
+                        deployment=self._deployment,
+                    ):
+                        response = self._client.embeddings.create(
+                            model=self._deployment,
+                            input=payload,
+                        )
+                    emit_metric(
+                        "embedding.azure.request",
+                        value=len(payload) or 1,
+                        deployment=self._deployment,
                     )
                     return [item.embedding for item in response.data]
                 except Exception as exc:  # pragma: no cover
@@ -410,7 +439,7 @@ class ChromaMemoryStore:
     ) -> None:
         """Store data either via ChromaDB or fallback map."""
         if self._collection is None:  # fallback path
-            self._fallback[layer][entry_id] = payload
+            self._fallback[layer][entry_id] = dict(payload)
             return
 
         try:  # pragma: no cover - depends on chromadb
@@ -444,6 +473,31 @@ class ChromaMemoryStore:
         """Persist a review record entry."""
         self._store_in_collection("review", record.id, asdict(record))
 
+    def get_semantic(self, node_id: str) -> Optional[Dict[str, object]]:
+        """Return a semantic node payload by identifier if available."""
+        if self._collection is None:
+            record = self._fallback["semantic"].get(node_id)
+            return dict(record) if record is not None else None
+
+        try:  # pragma: no cover - depends on chromadb
+            response = self._collection.get(
+                ids=[f"semantic:{node_id}"],
+                include=["documents"],
+            )
+        except Exception as exc:  # pragma: no cover - chromadb failure
+            raise MemoryError(f"Failed to fetch semantic node {node_id}: {exc}") from exc
+
+        documents = response.get("documents") or []
+        if not documents:
+            return None
+
+        document = documents[0]
+        if isinstance(document, str):
+            return cast(Dict[str, object], json.loads(document))
+        if isinstance(document, dict):
+            return cast(Dict[str, object], document)
+        return None
+
     def list_layer(self, layer: str) -> List[Dict[str, object]]:
         """Return layer payloads from the available store."""
         if self._collection is None:
@@ -476,8 +530,11 @@ class MemoryManager:
     def put_working_item(self, item: WorkingMemoryItem) -> None:
         """Store a working memory item with error handling."""
         self._logger.debug("Storing working memory item %s", item.key)
-        self._redis_store.put(item)
-        self._revision_logger.log("working", item.key, asdict(item))
+        payload = asdict(item)
+        with log_span("memory.put_working", key=item.key):
+            self._redis_store.put(item)
+            self._revision_logger.log("working", item.key, payload)
+        emit_metric("memory.write", layer="working")
 
     def get_working_item(self, key: str) -> Optional[WorkingMemoryItem]:
         """Retrieve a working memory item if present."""
@@ -488,22 +545,137 @@ class MemoryManager:
         """Append a new episodic memory entry."""
         self._logger.debug("Recording episodic memory %s", entry.id)
         entry_dict = asdict(entry)
-        self._chroma_store.add_episodic(entry)
-        self._revision_logger.log("episodic", entry.id, entry_dict)
+        with log_span("memory.record_episodic", id=entry.id):
+            self._chroma_store.add_episodic(entry)
+            self._revision_logger.log("episodic", entry.id, entry_dict)
+        emit_metric("memory.write", layer="episodic")
 
     def record_semantic(self, node: SemanticNode) -> None:
         """Append a new semantic node."""
         self._logger.debug("Recording semantic node %s", node.id)
         node_dict = asdict(node)
-        self._chroma_store.add_semantic(node)
-        self._revision_logger.log("semantic", node.id, node_dict)
+        with log_span("memory.record_semantic", id=node.id):
+            self._chroma_store.add_semantic(node)
+            self._revision_logger.log("semantic", node.id, node_dict)
+        emit_metric("memory.write", layer="semantic")
 
     def record_review(self, record: ReviewRecord) -> None:
         """Persist a review record after task execution."""
         self._logger.debug("Recording review %s", record.id)
         record_dict = asdict(record)
-        self._chroma_store.add_review(record)
-        self._revision_logger.log("review", record.id, record_dict)
+        with log_span("memory.record_review", id=record.id):
+            self._chroma_store.add_review(record)
+            self._revision_logger.log("review", record.id, record_dict)
+        emit_metric("memory.write", layer="review")
+
+    def get_semantic_node(self, node_id: str) -> Optional[SemanticNode]:
+        """Return a semantic node by id, or None when unavailable."""
+        payload = self._chroma_store.get_semantic(node_id)
+        if payload is None:
+            return None
+        return self._hydrate_semantic(payload)
+
+    def list_semantic_nodes(self, limit: Optional[int] = None) -> List[SemanticNode]:
+        """Return semantic nodes ordered by timestamp ascending, optionally limited."""
+        payloads = self._chroma_store.list_layer("semantic")
+        nodes: List[SemanticNode] = []
+        for payload in payloads:
+            node = self._hydrate_semantic(payload)
+            if node is not None:
+                nodes.append(node)
+        nodes.sort(key=lambda item: item.timestamp)
+        if limit is not None:
+            if limit <= 0:
+                return []
+            return nodes[-limit:]
+        return nodes
+
+    def link_semantic_nodes(self, source_id: str, target_id: str, weight: float = 0.5) -> None:
+        """Create or update a bidirectional relation between semantic nodes."""
+        if source_id == target_id:
+            return
+
+        source = self.get_semantic_node(source_id)
+        target = self.get_semantic_node(target_id)
+        if source is None or target is None:
+            self._logger.debug(
+                "Unable to link semantic nodes %s -> %s: missing node.",
+                source_id,
+                target_id,
+            )
+            return
+
+        weight_clamped = max(0.0, min(1.0, float(weight)))
+        updated = False
+
+        forward_key = f"{SEMANTIC_NODE_PREFIX}{target.id}"
+        previous_forward = source.relations.get(forward_key)
+        if previous_forward is None:
+            source.relations[forward_key] = weight_clamped
+            updated = True
+        else:
+            try:
+                if abs(float(previous_forward) - weight_clamped) > 1e-6:
+                    source.relations[forward_key] = weight_clamped
+                    updated = True
+            except (TypeError, ValueError):
+                source.relations[forward_key] = weight_clamped
+                updated = True
+
+        reverse_key = f"{SEMANTIC_NODE_PREFIX}{source.id}"
+        previous_reverse = target.relations.get(reverse_key)
+        if previous_reverse is None:
+            target.relations[reverse_key] = weight_clamped
+            updated = True
+        else:
+            try:
+                if abs(float(previous_reverse) - weight_clamped) > 1e-6:
+                    target.relations[reverse_key] = weight_clamped
+                    updated = True
+            except (TypeError, ValueError):
+                target.relations[reverse_key] = weight_clamped
+                updated = True
+
+        if not updated:
+            return
+
+        self.record_semantic(source)
+        self.record_semantic(target)
+        emit_metric(
+            "memory.semantic.link",
+            layer="semantic",
+            source=source.id,
+            target=target.id,
+        )
+
+    def get_semantic_neighbors(
+        self,
+        node_id: str,
+        limit: int = 5,
+    ) -> List[Tuple[SemanticNode, float]]:
+        """Return neighbours for a semantic node ordered by relation weight."""
+        node = self.get_semantic_node(node_id)
+        if node is None:
+            return []
+
+        neighbours: List[Tuple[SemanticNode, float]] = []
+        for relation_key, weight_raw in node.relations.items():
+            if not relation_key.startswith(SEMANTIC_NODE_PREFIX):
+                continue
+            target_id = relation_key[len(SEMANTIC_NODE_PREFIX) :]
+            neighbour = self.get_semantic_node(target_id)
+            if neighbour is None:
+                continue
+            try:
+                weight_value = float(weight_raw)
+            except (TypeError, ValueError):
+                continue
+            neighbours.append((neighbour, weight_value))
+
+        neighbours.sort(key=lambda item: item[1], reverse=True)
+        if limit >= 0:
+            return neighbours[:limit]
+        return neighbours
 
     def list_layer(self, layer: str) -> List[Dict[str, object]]:
         """List stored items for the requested layer."""
@@ -518,3 +690,173 @@ class MemoryManager:
     def get_revision_history(self, limit: int = 20) -> List[Dict[str, object]]:
         """Return the latest revision entries for audit or rollback tooling."""
         return self._revision_logger.history(limit)
+
+    def truncate_working_memory(self, max_items: int) -> int:
+        """Trim working memory to at most *max_items* entries, oldest first."""
+        if max_items <= 0:
+            return 0
+
+        items = self._redis_store.list_items()
+        if len(items) <= max_items:
+            return 0
+
+        items.sort(key=lambda item: item.created_at)
+        excess = len(items) - max_items
+        pruned = 0
+        with log_span(
+            "memory.truncate_working",
+            total=len(items),
+            limit=max_items,
+        ):
+            for item in items[:excess]:
+                try:
+                    self._redis_store.delete(item.key)
+                except MemoryError as exc:
+                    self._logger.error("Failed to prune working memory %s: %s", item.key, exc)
+                    continue
+                self._revision_logger.log(
+                    "working",
+                    item.key,
+                    {
+                        "action": "delete",
+                        "reason": "drift_mitigation",
+                        "created_at": item.created_at.isoformat(),
+                    },
+                )
+                pruned += 1
+
+        if pruned:
+            self._logger.info(
+                "Pruned %s working memory entries (limit=%s).",
+                pruned,
+                max_items,
+            )
+            emit_metric("memory.working.pruned", value=pruned)
+        return pruned
+
+    def decay_semantic_relations(self, decay: float) -> int:
+        """Decay semantic relation weights to dampen stale context."""
+        if decay <= 0:
+            return 0
+        if decay >= 1.0:
+            return 0
+
+        updated = 0
+        nodes = self.list_semantic_nodes()
+        with log_span(
+            "memory.decay_semantic_relations",
+            nodes=len(nodes),
+            decay=decay,
+        ):
+            for node in nodes:
+                changed = False
+                for relation_key in list(node.relations.keys()):
+                    if not relation_key.startswith(SEMANTIC_NODE_PREFIX):
+                        continue
+                    raw_weight = node.relations[relation_key]
+                    try:
+                        new_weight = float(raw_weight) * decay
+                    except (TypeError, ValueError):
+                        del node.relations[relation_key]
+                        changed = True
+                        continue
+                    if new_weight < SEMANTIC_RELATION_MIN_THRESHOLD:
+                        del node.relations[relation_key]
+                        changed = True
+                    else:
+                        new_weight = round(new_weight, 4)
+                        if abs(new_weight - float(raw_weight)) > 1e-5:
+                            node.relations[relation_key] = new_weight
+                            changed = True
+                if changed:
+                    updated += 1
+                    try:
+                        self.record_semantic(node)
+                    except MemoryError as exc:
+                        self._logger.error(
+                            "Failed to persist decayed relations for %s: %s",
+                            node.id,
+                            exc,
+                        )
+
+        if updated:
+            self._logger.info(
+                "Decayed semantic relations for %s nodes (decay=%.2f).",
+                updated,
+                decay,
+            )
+            emit_metric("memory.semantic.decayed_nodes", value=updated, decay=decay)
+        return updated
+
+    def apply_drift_mitigation(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        max_working_items: int = MAX_WORKING_MEMORY_ITEMS,
+        relation_decay: float = SEMANTIC_RELATION_DECAY,
+    ) -> Dict[str, object]:
+        """Apply drift mitigation heuristics and return a summary of actions."""
+
+        summary: Dict[str, object] = {}
+
+        with log_span(
+            "memory.apply_drift_mitigation",
+            task_id=task_id or "n/a",
+            max_working=max_working_items,
+            relation_decay=relation_decay,
+        ):
+            pruned = self.truncate_working_memory(max_working_items)
+            if pruned:
+                summary["working_pruned"] = pruned
+
+            if relation_decay < 1.0:
+                decayed = self.decay_semantic_relations(relation_decay)
+                if decayed:
+                    summary["semantic_nodes_updated"] = decayed
+
+        context = f" for task {task_id}" if task_id else ""
+        if summary:
+            self._logger.info("Drift mitigation applied%s: %s", context, summary)
+            emit_metric("memory.drift.mitigation", value=1, **summary)
+        else:
+            self._logger.debug("Drift mitigation produced no changes%s.", context)
+
+        return summary
+
+    def _hydrate_semantic(self, payload: Dict[str, object]) -> Optional[SemanticNode]:
+        try:
+            node_id = str(payload["id"])
+            label = str(payload.get("label", "")).strip()
+            definition = str(payload.get("definition", "")).strip()
+        except KeyError:
+            self._logger.debug("Semantic payload missing fields: %s", payload)
+            return None
+
+        timestamp = RedisMemoryStore._coerce_timestamp(payload.get("timestamp"))
+
+        sources_raw = payload.get("sources", [])
+        if isinstance(sources_raw, list):
+            sources = [str(item) for item in sources_raw]
+        elif sources_raw:
+            sources = [str(sources_raw)]
+        else:
+            sources = []
+
+        relations_raw = payload.get("relations", {})
+        relations: Dict[str, float] = {}
+        if isinstance(relations_raw, dict):
+            for key, value in relations_raw.items():
+                key_str = str(key)
+                try:
+                    relations[key_str] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
+        return SemanticNode(
+            id=node_id,
+            label=label,
+            definition=definition,
+            sources=sources,
+            timestamp=timestamp,
+            relations=relations,
+        )

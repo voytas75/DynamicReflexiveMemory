@@ -78,3 +78,33 @@ def test_health_checks_raise_on_redis_failure(monkeypatch: pytest.MonkeyPatch, t
 
     with pytest.raises(HealthCheckError):
         run_startup_checks(config)
+
+
+def test_health_checks_warn_when_standard_embedding_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _load_config(tmp_path)
+    config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
+    config.embedding.model = "text-embedding-3-large"
+
+    _install_stub_modules(monkeypatch, tmp_path)
+
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "key")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.com")
+    monkeypatch.delenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", raising=False)
+
+    warnings = run_startup_checks(config)
+    assert warnings
+    assert any("embedding deployment" in warning for warning in warnings)
+
+
+def test_health_checks_skip_warning_for_custom_embedding(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _load_config(tmp_path)
+    config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
+
+    _install_stub_modules(monkeypatch, tmp_path)
+
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "key")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.com")
+    monkeypatch.delenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", raising=False)
+
+    warnings = run_startup_checks(config)
+    assert warnings == []

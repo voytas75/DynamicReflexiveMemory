@@ -5,6 +5,7 @@ Updates:
     v0.2 - 2025-11-07 - Routed CLI execution through the LiveTaskLoop orchestrator.
     v0.3 - 2025-11-06 - Added startup health checks with warning surface.
     v0.4 - 2025-11-07 - Loaded environment variables from .env during startup.
+    v0.5 - 2025-11-07 - Captured optional human review feedback in CLI workflows.
 """
 
 from __future__ import annotations
@@ -36,7 +37,12 @@ def setup_logging(logging_config: Optional[Path] = None) -> None:
     logging.config.fileConfig(config_path, disable_existing_loggers=False)
 
 
-def run_cli(config: AppConfig, task: Optional[str] = None, workflow: Optional[str] = None) -> None:
+def run_cli(
+    config: AppConfig,
+    task: Optional[str] = None,
+    workflow: Optional[str] = None,
+    human_feedback: Optional[str] = None,
+) -> None:
     """Run a simple CLI workflow as a fallback when GUI is unavailable."""
     logger = logging.getLogger("drm.cli")
     task_loop = LiveTaskLoop(config)
@@ -45,6 +51,7 @@ def run_cli(config: AppConfig, task: Optional[str] = None, workflow: Optional[st
         outcome = task_loop.run_task(
             task=prompt_text,
             workflow_override=workflow,
+            human_feedback=human_feedback,
         )
     except DRMError as exc:
         if isinstance(exc, WorkflowError):
@@ -73,8 +80,12 @@ def run_cli(config: AppConfig, task: Optional[str] = None, workflow: Optional[st
     if outcome.review.suggestions:
         logger.info("Review suggestions: %s", "; ".join(outcome.review.suggestions))
     logger.info("Review notes: %s", outcome.review.notes)
+    if human_feedback:
+        logger.info("Human feedback applied: %s", human_feedback)
     if outcome.drift_advisory:
         logger.warning("Controller advisory: %s", outcome.drift_advisory)
+    if outcome.mitigation_summary:
+        logger.info("Mitigation actions: %s", outcome.mitigation_summary)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -87,6 +98,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--task", type=str, help="Task prompt for CLI mode.")
     parser.add_argument("--workflow", type=str, help="Workflow override for execution.")
     parser.add_argument("--logging-config", type=Path, help="Path to logging configuration.")
+    parser.add_argument("--feedback", type=str, help="Optional human review feedback for the task.")
     args = parser.parse_args(argv)
 
     try:
@@ -110,10 +122,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         if gui_result is not None:
             return gui_result
         logging.getLogger("drm").info("Falling back to CLI mode.")
-        run_cli(config, args.task, args.workflow)
+        run_cli(config, args.task, args.workflow, args.feedback)
         return 0
 
-    run_cli(config, args.task, args.workflow)
+    run_cli(config, args.task, args.workflow, args.feedback)
     return 0
 
 

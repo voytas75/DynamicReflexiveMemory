@@ -7,6 +7,7 @@ Updates:
     v0.4 - 2025-11-06 - Surfaced controller workflow biases in the telemetry panel.
     v0.5 - 2025-11-07 - Displayed recent memory revision history alongside other telemetry.
     v0.6 - 2025-11-07 - Guarded headless environments to avoid Qt crashes and fall back to CLI.
+    v0.7 - 2025-11-07 - Added human review feedback capture and drift mitigation controls.
 """
 
 from __future__ import annotations
@@ -235,11 +236,13 @@ class TaskExecutionWorker(QObject):  # pragma: no cover - requires GUI runtime
         task_loop: LiveTaskLoop,
         task_text: str,
         workflow_override: Optional[str],
+        human_feedback: Optional[str],
     ) -> None:
         super().__init__()
         self._task_loop = task_loop
         self._task_text = task_text
         self._workflow_override = workflow_override
+        self._human_feedback = human_feedback
 
     @Slot()
     def run(self) -> None:
@@ -248,6 +251,7 @@ class TaskExecutionWorker(QObject):  # pragma: no cover - requires GUI runtime
             outcome = self._task_loop.run_task(
                 task=self._task_text,
                 workflow_override=self._workflow_override,
+                human_feedback=self._human_feedback,
             )
             self.finished.emit(outcome)
         except DRMError as exc:
@@ -309,6 +313,14 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         layout.addLayout(controls_row)
         layout.addWidget(self._task_input)
 
+        layout.addWidget(QLabel("Optional human review feedback:"))
+        self._feedback_input = QPlainTextEdit()
+        self._feedback_input.setPlaceholderText(
+            "Provide human notes or corrections to blend with automated review."
+        )
+        self._feedback_input.setFixedHeight(60)
+        layout.addWidget(self._feedback_input)
+
         self._status_label = QLabel("Idle.")
         layout.addWidget(self._status_label)
 
@@ -331,6 +343,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._drift_label.setWordWrap(True)
         layout.addWidget(self._drift_label)
 
+        self._mitigation_label = QLabel("No mitigation actions recorded.")
+        self._mitigation_label.setWordWrap(True)
+        layout.addWidget(self._mitigation_label)
+
         self._bias_label = QLabel("Controller biases: none recorded.")
         self._bias_label.setWordWrap(True)
         layout.addWidget(self._bias_label)
@@ -338,6 +354,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         refresh_button = QPushButton("Refresh Memory Snapshot")
         cast(Any, refresh_button.clicked).connect(self._refresh_memory_snapshot)
         layout.addWidget(refresh_button)
+
+        mitigation_button = QPushButton("Apply Drift Mitigation Now")
+        cast(Any, mitigation_button.clicked).connect(self._handle_manual_mitigation)
+        layout.addWidget(mitigation_button)
 
         self._refresh_memory_snapshot()
 
@@ -362,7 +382,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._set_interaction_enabled(False)
         self._status_label.setText("Running task…")
 
-        worker = TaskExecutionWorker(self._task_loop, task_text, workflow)
+        feedback_text = self._feedback_input.toPlainText().strip()
+        human_feedback = feedback_text or None
+
+        worker = TaskExecutionWorker(self._task_loop, task_text, workflow, human_feedback)
         thread = QThread(self)
         worker.moveToThread(thread)
         cast(Any, thread.started).connect(worker.run)
@@ -378,11 +401,34 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._worker_thread = thread
         thread.start()
 
+    def _handle_manual_mitigation(self) -> None:
+        """Apply drift mitigation immediately and surface the outcome."""
+        summary = self._memory_manager.apply_drift_mitigation()
+        if summary:
+            self._mitigation_label.setText(
+                self._build_mitigation_label("Manual", summary)
+            )
+            actions = self._summarise_actions(summary)
+            QMessageBox.information(
+                self,
+                "Mitigation Applied",
+                f"Mitigation actions executed: {actions}",
+            )
+            self._refresh_memory_snapshot()
+        else:
+            self._mitigation_label.setText("No mitigation actions recorded.")
+            QMessageBox.information(
+                self,
+                "Mitigation Applied",
+                "No mitigation changes were required.",
+            )
+
     def _on_task_finished(self, outcome: object) -> None:
         """Handle successful task completion."""
         self._set_interaction_enabled(True)
         self._status_label.setText("Task completed.")
         self._task_input.clear()
+        self._feedback_input.clear()
         self._worker_thread = None
         self._current_worker = None
 
@@ -394,6 +440,13 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._recent_outcomes = self._recent_outcomes[-5:]
         self._render_recent_outputs()
         self._refresh_memory_snapshot()
+
+        if outcome.mitigation_summary:
+            self._mitigation_label.setText(
+                self._build_mitigation_label("Automatic", outcome.mitigation_summary)
+            )
+        else:
+            self._mitigation_label.setText("No mitigation actions recorded.")
 
     def _on_task_failed(self, error: object) -> None:
         """Handle task failure from the worker thread."""
@@ -486,6 +539,18 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         segments = [f"{name}: {value:+.2f}" for name, value in sorted(biases.items())]
         return "<b>Controller Biases:</b> " + ", ".join(segments)
 
+    @staticmethod
+    def _summarise_actions(summary: Optional[Mapping[str, object]]) -> str:
+        if not summary:
+            return "None"
+        parts = [f"{key}={summary[key]}" for key in sorted(summary.keys())]
+        return ", ".join(parts)
+
+    @staticmethod
+    def _build_mitigation_label(kind: str, summary: Mapping[str, object]) -> str:
+        actions = DRMWindow._summarise_actions(summary)
+        return f"<b>{kind} Mitigation:</b> {actions}"
+
     def _render_recent_outputs(self) -> None:
         """Render recent task outcomes in the dedicated view."""
         if not self._recent_outcomes:
@@ -505,6 +570,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
                     f"[{outcome.request.created_at.isoformat()}] "
                     f"{outcome.selection.workflow} ({outcome.selection.rationale}, score={outcome.selection.score:.2f})\n"
                     f"Latency: {outcome.result.latency_seconds:.2f}s | Drift: {outcome.drift_advisory or 'None'}\n"
+                    f"Mitigation: {self._summarise_actions(outcome.mitigation_summary) if outcome.mitigation_summary else 'None'}\n"
                     f"Output:\n{outcome.result.content}\n"
                     f"Review: verdict={outcome.review.verdict}, auto={outcome.review.auto_verdict}, "
                     f"quality={quality}, suggestions={suggestions}\n"
@@ -569,6 +635,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         """Enable or disable task interaction widgets."""
         self._workflow_selector.setEnabled(enabled)
         self._task_input.setEnabled(enabled)
+        self._feedback_input.setEnabled(enabled)
         self._run_button.setEnabled(enabled)
 
 

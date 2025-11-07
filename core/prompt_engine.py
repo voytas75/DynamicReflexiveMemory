@@ -1,13 +1,15 @@
 """Adaptive prompt construction utilities for DRM workflows.
 
-Updates: v0.1 - 2025-11-06 - Added AdaptivePromptEngine with memory-aware prompt
-composition and drift annotations.
+Updates:
+    v0.1 - 2025-11-06 - Added AdaptivePromptEngine with memory-aware prompt
+        composition and drift annotations.
+    v0.2 - 2025-11-07 - Included semantic relation summaries in generated prompts.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from textwrap import dedent
 from typing import Dict, List, Optional, Sequence
 
@@ -27,6 +29,7 @@ class PromptContext:
     episodic_memory: Sequence[Dict[str, object]]
     semantic_memory: Sequence[Dict[str, object]]
     recent_reviews: List[ReviewRecord]
+    semantic_relations: Dict[str, List[Dict[str, object]]] = field(default_factory=dict)
     drift_indicator: Optional[str] = None
 
 
@@ -49,6 +52,7 @@ class AdaptivePromptEngine:
             self._format_memory_section("Working Memory", context.working_memory),
             self._format_list_section("Recent Episodes", context.episodic_memory),
             self._format_list_section("Semantic Concepts", context.semantic_memory),
+            self._format_semantic_relations(context.semantic_relations),
             self._format_reviews(context.recent_reviews),
             "### Task Instruction",
             context.task.strip(),
@@ -100,6 +104,39 @@ class AdaptivePromptEngine:
             f"""
             ### {title}
             {formatted_items}
+            """
+        ).strip()
+
+    @staticmethod
+    def _format_semantic_relations(
+        relations: Dict[str, List[Dict[str, object]]]
+    ) -> str:
+        if not relations:
+            return ""
+
+        lines: List[str] = []
+        for node_id, neighbours in relations.items():
+            if not neighbours:
+                continue
+            neighbour_segments: List[str] = []
+            for neighbour in neighbours:
+                label = neighbour.get("label") or neighbour.get("id", "unknown")
+                weight = neighbour.get("weight")
+                if isinstance(weight, (int, float)):
+                    neighbour_segments.append(f"{label} ({weight:.2f})")
+                else:
+                    neighbour_segments.append(str(label))
+            if neighbour_segments:
+                lines.append(f"- {node_id}: " + ", ".join(neighbour_segments))
+
+        if not lines:
+            return ""
+
+        formatted = "\n".join(lines)
+        return dedent(
+            f"""
+            ### Semantic Relations
+            {formatted}
             """
         ).strip()
 

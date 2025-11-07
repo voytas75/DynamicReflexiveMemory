@@ -34,12 +34,13 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
 
    - Redis (port 6379) persists working memory.
    - ChromaDB persists via the Python package; no container is required.
+   - Ollama (port 11434) is available for local inference; pull models with `ollama pull <model>` and set `OLLAMA_BASE_URL` when using the `local` workflow.
 
 3. **Launch the app**
 
    ```bash
    python main.py --mode gui        # GUI (requires PySide6)
-   python main.py --mode cli --task "Draft integration plan"  # CLI fallback
+   python main.py --mode cli --task "Draft integration plan" --feedback "Looks good"  # CLI fallback with optional human review
    ```
 
    The runner detects headless environments automatically and will fall back to
@@ -82,6 +83,20 @@ the orchestration path or `pytest -k revisions` to inspect the logging tests.
   ephemeral runs or CI pipelines.
 - The GUI "Memory Snapshot" panel surfaces the five most recent revisions
   alongside other telemetry for quick inspection.
+
+## Semantic Graph
+
+- Semantic concepts automatically link to recent nodes, and the prompt engine
+  surfaces their strongest relationships for context-rich task execution.
+- Drift mitigation routines decay relation weights and prune stale working
+  memory whenever the controller detects performance issues, keeping the active
+  context focused.
+
+## Observability
+
+- Memory operations emit metrics via the `drm.metrics` logger and structured
+  span events via `drm.span`. Extend `config/logging.conf` to route these
+  channels to your preferred observability stack.
 
 ## CI & Quality Checks
 

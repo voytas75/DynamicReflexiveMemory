@@ -75,6 +75,7 @@ def test_live_task_loop_persists_memory(monkeypatch, tmp_path) -> None:
     assert outcome.result.content.startswith("Stub outcome")
     assert outcome.review.verdict == "pass"
     assert outcome.drift_advisory is None
+    assert outcome.mitigation_summary is None
 
     episodic = memory_manager.list_layer("episodic")
     semantic = memory_manager.list_layer("semantic")

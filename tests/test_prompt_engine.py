@@ -28,9 +28,15 @@ def test_prompt_includes_sections(tmp_path: Path) -> None:
         working_memory={"a": 1, "b": 2},
         episodic_memory=[{"id": "ep1", "content": "Previous calculation."}],
         semantic_memory=[{"id": "concept1", "content": "Addition basics."}],
+        semantic_relations={
+            "concept1": [
+                {"id": "concept2", "label": "Advanced addition", "weight": 0.85}
+            ]
+        },
         recent_reviews=[],
     )
     prompt = engine.build_prompt(context)
     assert "### DRM Adaptive Prompt" in prompt
     assert "### Working Memory" in prompt
     assert "### Recent Episodes" in prompt
+    assert "### Semantic Relations" in prompt

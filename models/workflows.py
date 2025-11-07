@@ -4,6 +4,7 @@ Updates:
     v0.1 - 2025-11-06 - Introduced task request/result models and workflow selection metadata.
     v0.2 - 2025-11-07 - Added TaskRunOutcome summary for live execution loop.
     v0.3 - 2025-11-07 - Adopted timezone-aware timestamps for workflow metadata.
+    v0.4 - 2025-11-07 - Captured drift mitigation summaries in task outcomes.
 """
 
 from __future__ import annotations
@@ -64,3 +65,4 @@ class TaskRunOutcome:
     result: TaskResult
     review: ReviewRecord
     drift_advisory: Optional[str] = None
+    mitigation_summary: Optional[Dict[str, object]] = None

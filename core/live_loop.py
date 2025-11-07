@@ -5,6 +5,7 @@ Updates:
     v0.2 - 2025-11-07 - Normalised hydrated timestamps to timezone-aware UTC.
     v0.3 - 2025-11-06 - Persisted semantic summaries and integrated controller-aware
         task selection.
+    v0.4 - 2025-11-07 - Linked semantic concepts and surfaced relation context for prompts.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ class _LayerSnapshot:
     episodic: List[Dict[str, object]]
     semantic: List[Dict[str, object]]
     reviews: List[ReviewRecord]
+    semantic_relations: Dict[str, List[Dict[str, object]]]
 
 
 class LiveTaskLoop:
@@ -97,6 +99,7 @@ class LiveTaskLoop:
             working_memory=working_payload,
             episodic_memory=layers.episodic,
             semantic_memory=layers.semantic,
+            semantic_relations=layers.semantic_relations,
             recent_reviews=layers.reviews,
             drift_indicator=self._controller.last_advisory,
         )
@@ -140,8 +143,12 @@ class LiveTaskLoop:
             raise
         self._persist_review(review)
 
+        mitigation_summary: Optional[Dict[str, object]] = None
         drift_advisory = self._controller.register_result(selection, result, review)
         if drift_advisory:
+            mitigation_summary = self._memory_manager.apply_drift_mitigation(task_id=request.task_id)
+            if mitigation_summary:
+                self._persist_mitigation_summary(request.task_id, mitigation_summary)
             self._persist_drift_advisory(request.task_id, selection.workflow, drift_advisory)
 
         result_payload = cast(
@@ -163,6 +170,7 @@ class LiveTaskLoop:
             result=result,
             review=review,
             drift_advisory=drift_advisory,
+            mitigation_summary=mitigation_summary,
         )
 
     def _persist_result(
@@ -214,6 +222,8 @@ class LiveTaskLoop:
         if not definition:
             return
 
+        recent_nodes = self._memory_manager.list_semantic_nodes(limit=3)
+
         node = SemanticNode(
             id=f"concept:{request.task_id}",
             label=label,
@@ -229,6 +239,21 @@ class LiveTaskLoop:
                 node.id,
                 exc,
             )
+            return
+
+        for related in recent_nodes:
+            if related.id == node.id:
+                continue
+            try:
+                base_weight = 0.6 if selection.workflow in related.sources else 0.4
+                self._memory_manager.link_semantic_nodes(node.id, related.id, base_weight)
+            except MemoryError as exc:
+                self._logger.error(
+                    "Failed to link semantic concept %s -> %s: %s",
+                    node.id,
+                    related.id,
+                    exc,
+                )
 
     @staticmethod
     def _build_semantic_label(user_task: str) -> str:
@@ -271,6 +296,21 @@ class LiveTaskLoop:
             payload=drift_payload,
         )
 
+    def _persist_mitigation_summary(
+        self, task_id: str, summary: Dict[str, object]
+    ) -> None:
+        payload = cast(
+            Dict[str, object],
+            {
+                "summary": summary,
+                "applied_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        self._store_working_item(
+            key=f"task:{task_id}:mitigation",
+            payload=payload,
+        )
+
     def _store_working_item(self, key: str, payload: Dict[str, object]) -> None:
         item = WorkingMemoryItem(
             key=key,
@@ -286,7 +326,40 @@ class LiveTaskLoop:
         episodic = self._safe_layer_slice("episodic", limit)
         semantic = self._safe_layer_slice("semantic", limit)
         reviews = self._load_recent_reviews(limit)
-        return _LayerSnapshot(episodic=episodic, semantic=semantic, reviews=reviews)
+        relations = self._build_semantic_relations(semantic, limit)
+        return _LayerSnapshot(
+            episodic=episodic,
+            semantic=semantic,
+            reviews=reviews,
+            semantic_relations=relations,
+        )
+
+    def _build_semantic_relations(
+        self, semantic_payloads: List[Dict[str, object]], limit: int
+    ) -> Dict[str, List[Dict[str, object]]]:
+        relations: Dict[str, List[Dict[str, object]]] = {}
+        for entry in semantic_payloads:
+            node_id_raw = entry.get("id")
+            if node_id_raw is None:
+                continue
+            node_id = str(node_id_raw)
+            if not node_id:
+                continue
+            neighbours = self._memory_manager.get_semantic_neighbors(node_id, limit)
+            if not neighbours:
+                continue
+            summary: List[Dict[str, object]] = []
+            for neighbour, weight in neighbours:
+                summary.append(
+                    {
+                        "id": neighbour.id,
+                        "label": neighbour.label,
+                        "weight": round(weight, 2),
+                    }
+                )
+            if summary:
+                relations[node_id] = summary
+        return relations
 
     def _safe_layer_slice(self, layer: str, limit: int) -> List[Dict[str, object]]:
         try:
