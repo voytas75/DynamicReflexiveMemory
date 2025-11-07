@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 - Prevented GUI startup from crashing on systems without a graphical backend by falling back to CLI mode.
+- Suppressed false Azure embedding deployment warnings when the deployment is configured in `config.json`.
 
 ### Documentation
 - Expanded README with revision logging guidance and clarified ChromaDB deployment model.
