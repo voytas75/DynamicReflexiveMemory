@@ -5,6 +5,7 @@ Updates:
     v0.2 - 2025-11-06 - Added memory snapshots and drift advisory display.
     v0.3 - 2025-11-07 - Integrated LiveTaskLoop with interactive task execution and drift advisory history.
     v0.4 - 2025-11-06 - Surfaced controller workflow biases in the telemetry panel.
+    v0.5 - 2025-11-07 - Displayed recent memory revision history alongside other telemetry.
 """
 
 from __future__ import annotations
@@ -382,6 +383,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             episodic = self._memory_manager.list_layer("episodic")
             semantic = self._memory_manager.list_layer("semantic")
             reviews = self._memory_manager.list_layer("review")
+            revisions = self._memory_manager.get_revision_history(limit=5)
         except MemoryError as exc:
             LOGGER.error("Failed to load memory snapshot: %s", exc)
             self._memory_view.setPlainText(f"Unable to load memory snapshot: {exc}")
@@ -405,13 +407,14 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             *(self._format_generic_item(item) for item in reviews[:5]),
             "=== Drift Advisories ===",
             *(self._format_working_item(item) for item in drift_items[:5]),
+            "=== Revision Log ===",
+            *(self._format_revision_entry(entry) for entry in revisions),
         ]
         self._memory_view.setPlainText("\n".join(lines))
 
         self._drift_label.setText(drift_summary)
         self._bias_label.setText(self._format_bias_summary(self._controller.workflow_biases))
 
-    @staticmethod
     @staticmethod
     def _format_working_item(item: WorkingMemoryItem) -> str:
         return f"{item.key}: {item.payload} (ttl={item.ttl_seconds}s)"
@@ -421,6 +424,14 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         identifier = item.get("id", "unknown")
         content = item.get("content") or item.get("definition") or item
         return f"{identifier}: {content}"
+
+    @staticmethod
+    def _format_revision_entry(entry: Dict[str, object]) -> str:
+        revision = entry.get("revision", "?")
+        layer = entry.get("layer", "unknown")
+        identifier = entry.get("id", "unknown")
+        timestamp = entry.get("timestamp", "n/a")
+        return f"rev {revision} | {layer}:{identifier} @ {timestamp}"
 
     def _format_drift_summary(self, items: Sequence[WorkingMemoryItem]) -> str:
         if not items:

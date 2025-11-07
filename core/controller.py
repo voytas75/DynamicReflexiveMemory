@@ -6,6 +6,7 @@ Updates:
     v0.2 - 2025-11-06 - Tracked last advisory for GUI display.
     v0.3 - 2025-11-06 - Added adaptive workflow bias adjustments derived from drift
         feedback.
+    v0.4 - 2025-11-07 - Logged workflow bias snapshots when drift triggers.
 """
 
 from __future__ import annotations
@@ -129,6 +130,10 @@ class SelfAdjustingController:
             reasoning_workflow = self._find_workflow("reasoning")
             if reasoning_workflow and reasoning_workflow != workflow:
                 self._bump_bias(reasoning_workflow, 0.25)
+            LOGGER.info(
+                "Drift detected; workflow biases updated: %s",
+                self._workflow_biases,
+            )
 
         # Promote alternating fast/reasoning usage when latency spikes
         if latency > average_latency * 1.4:

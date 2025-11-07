@@ -12,6 +12,7 @@ to deliver continuity between reasoning sessions.
   semantic stores.
 - Hybrid automated/human review loop feeding self-adjustment heuristics.
 - Strictly typed configuration and models via Pydantic and dataclasses.
+- Append-only memory revision log for audit trails and rollback instrumentation.
 
 ## Getting Started
 
@@ -32,6 +33,7 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
    ```
 
    - Redis (port 6379) persists working memory.
+   - ChromaDB persists via the Python package; no container is required.
 
 3. **Launch the app**
 
@@ -65,6 +67,18 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
 ```bash
 pytest
 ```
+
+The suite includes integration coverage for the live task loop, controller drift
+logic, and memory revision logging. Use `pytest -k "live_task_loop"` to focus on
+the orchestration path or `pytest -k revisions` to inspect the logging tests.
+
+## Memory Revision Log
+
+- Memory mutations are appended to `data/logs/memory_revisions.jsonl` by default.
+- Override the location with `DRM_MEMORY_LOG_PATH=/custom/revisions.jsonl` for
+  ephemeral runs or CI pipelines.
+- The GUI "Memory Snapshot" panel surfaces the five most recent revisions
+  alongside other telemetry for quick inspection.
 
 ## CI & Quality Checks
 

@@ -3,6 +3,7 @@
 Updates:
     v0.1 - 2025-11-06 - Implemented Redis/ChromaDB memory scaffolding with graceful fallbacks for development environments.
     v0.2 - 2025-11-07 - Normalised timestamps to timezone-aware UTC handling.
+    v0.3 - 2025-11-07 - Added revision logging and history export for memory operations.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import os
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List, Optional, Sequence, cast
 
 from config.settings import AppConfig, EmbeddingConfig
@@ -56,6 +58,83 @@ except ImportError:  # pragma: no cover
 AzureOpenAI = cast(Any, _AzureOpenAI)
 
 LOGGER = logging.getLogger("drm.memory")
+
+REVISION_LOG_ENV = "DRM_MEMORY_LOG_PATH"
+DEFAULT_REVISION_LOG = PROJECT_ROOT / "data" / "logs" / "memory_revisions.jsonl"
+
+
+class MemoryRevisionLogger:
+    """Append-only revision log supporting rollback-aware auditing."""
+
+    def __init__(self, path_override: Optional[Path] = None) -> None:
+        log_path = self._resolve_log_path(path_override)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._path = log_path
+        self._lock = Lock()
+        self._revision = self._load_last_revision()
+
+    def log(self, layer: str, identifier: str, payload: Dict[str, object]) -> None:
+        """Append a revision entry capturing the memory mutation."""
+        record = {
+            "layer": layer,
+            "id": identifier,
+            "payload": payload,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        with self._lock:
+            self._revision += 1
+            record["revision"] = self._revision
+            with self._path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, default=str))
+                handle.write("\n")
+
+    def history(self, limit: int = 20) -> List[Dict[str, object]]:
+        """Return the most recent revision entries up to *limit*."""
+        if not self._path.exists():
+            return []
+
+        with self._path.open("r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+        selected = lines[-limit:]
+        history: List[Dict[str, object]] = []
+        for line in selected:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                history.append(cast(Dict[str, object], json.loads(line)))
+            except json.JSONDecodeError:
+                LOGGER.debug("Skipping malformed revision log entry: %s", line)
+        return history
+
+    def _resolve_log_path(self, override: Optional[Path]) -> Path:
+        if override is not None:
+            return override
+        env_value = os.getenv(REVISION_LOG_ENV)
+        if env_value:
+            candidate = Path(env_value)
+            if candidate.suffix:
+                return candidate
+            return candidate / DEFAULT_REVISION_LOG.name
+        return DEFAULT_REVISION_LOG
+
+    def _load_last_revision(self) -> int:
+        if not self._path.exists():
+            return 0
+        last_revision = 0
+        try:
+            with self._path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    revision_raw = record.get("revision")
+                    if isinstance(revision_raw, int) and revision_raw > last_revision:
+                        last_revision = revision_raw
+        except OSError as exc:
+            LOGGER.warning("Unable to read revision log %s: %s", self._path, exc)
+        return last_revision
 
 
 class RedisMemoryStore:
@@ -392,11 +471,13 @@ class MemoryManager:
         self._redis_store = RedisMemoryStore(config)
         self._chroma_store = ChromaMemoryStore(config)
         self._logger = LOGGER
+        self._revision_logger = MemoryRevisionLogger()
 
     def put_working_item(self, item: WorkingMemoryItem) -> None:
         """Store a working memory item with error handling."""
         self._logger.debug("Storing working memory item %s", item.key)
         self._redis_store.put(item)
+        self._revision_logger.log("working", item.key, asdict(item))
 
     def get_working_item(self, key: str) -> Optional[WorkingMemoryItem]:
         """Retrieve a working memory item if present."""
@@ -406,17 +487,23 @@ class MemoryManager:
     def record_episodic(self, entry: EpisodicMemoryEntry) -> None:
         """Append a new episodic memory entry."""
         self._logger.debug("Recording episodic memory %s", entry.id)
+        entry_dict = asdict(entry)
         self._chroma_store.add_episodic(entry)
+        self._revision_logger.log("episodic", entry.id, entry_dict)
 
     def record_semantic(self, node: SemanticNode) -> None:
         """Append a new semantic node."""
         self._logger.debug("Recording semantic node %s", node.id)
+        node_dict = asdict(node)
         self._chroma_store.add_semantic(node)
+        self._revision_logger.log("semantic", node.id, node_dict)
 
     def record_review(self, record: ReviewRecord) -> None:
         """Persist a review record after task execution."""
         self._logger.debug("Recording review %s", record.id)
+        record_dict = asdict(record)
         self._chroma_store.add_review(record)
+        self._revision_logger.log("review", record.id, record_dict)
 
     def list_layer(self, layer: str) -> List[Dict[str, object]]:
         """List stored items for the requested layer."""
@@ -427,3 +514,7 @@ class MemoryManager:
     def list_working_items(self, pattern: str = "*") -> List[WorkingMemoryItem]:
         """List working memory records for UI inspection."""
         return self._redis_store.list_items(pattern)
+
+    def get_revision_history(self, limit: int = 20) -> List[Dict[str, object]]:
+        """Return the latest revision entries for audit or rollback tooling."""
+        return self._revision_logger.history(limit)

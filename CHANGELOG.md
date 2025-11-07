@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/) and dates use ISO-8601 (`YYYY-MM-DD`).
 
+## [0.1.2] - 2025-11-07
+
+### Added
+- Append-only memory revision logger with configurable log path (`DRM_MEMORY_LOG_PATH`).
+- Integration-oriented tests covering the live task loop, drift controller biases, and revision history.
+- GUI surfacing of recent memory revisions for quick inspection.
+
+### Changed
+- Controller now emits informative logs when drift triggers workflow bias updates.
+
+### Documentation
+- Expanded README with revision logging guidance and clarified ChromaDB deployment model.
+
 ## [0.1.1] - 2025-11-07
 
 ### Added
