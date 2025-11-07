@@ -44,6 +44,7 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
 
 - `config/config.json` controls workflows, providers, and memory locations.
 - `config/logging.conf` sets structured logging output.
+- Environment variables are loaded automatically from a local `.env` file (via `python-dotenv`) if present.
 - Provider credentials:
   - Azure OpenAI: set `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`,
     and optionally `AZURE_OPENAI_API_VERSION`.

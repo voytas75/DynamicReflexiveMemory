@@ -4,6 +4,7 @@ Updates:
     v0.1 - 2025-11-06 - Added CLI/GUI bootstrap with configuration loading, logging setup, and sample task execution pipeline.
     v0.2 - 2025-11-07 - Routed CLI execution through the LiveTaskLoop orchestrator.
     v0.3 - 2025-11-06 - Added startup health checks with warning surface.
+    v0.4 - 2025-11-07 - Loaded environment variables from .env during startup.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ import logging
 import logging.config
 from pathlib import Path
 from typing import Optional
+
+from dotenv import load_dotenv
 
 from config.settings import AppConfig, get_app_config, resolve_config_path
 from core.exceptions import DRMError, HealthCheckError, WorkflowError
@@ -76,6 +79,8 @@ def run_cli(config: AppConfig, task: Optional[str] = None, workflow: Optional[st
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Parse CLI arguments and dispatch the selected mode."""
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Dynamic Reflexive Memory runner.")
     parser.add_argument("--mode", choices=["gui", "cli"], default="gui")
     parser.add_argument("--config", type=Path, help="Path to configuration file.")
