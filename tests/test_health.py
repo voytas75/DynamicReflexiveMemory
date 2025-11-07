@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from config import settings
-from core.exceptions import HealthCheckError
 from core.health import run_startup_checks
 
 
@@ -70,14 +69,15 @@ def test_health_checks_with_stubbed_dependencies(monkeypatch: pytest.MonkeyPatch
     assert warnings == []
 
 
-def test_health_checks_raise_on_redis_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_health_checks_warn_on_redis_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config = _load_config(tmp_path)
     config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
 
     _install_stub_modules(monkeypatch, tmp_path, redis_ping_ok=False)
 
-    with pytest.raises(HealthCheckError):
-        run_startup_checks(config)
+    warnings = run_startup_checks(config)
+    assert warnings
+    assert any("redis unavailable" in warning for warning in warnings)
 
 
 def test_health_checks_warn_when_standard_embedding_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

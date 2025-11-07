@@ -385,6 +385,11 @@ class ChromaMemoryStore:
 
         self._embedding_fn = self._build_embedding_function(config)
         self._supports_vector_query = self._embedding_fn is not None
+        if not self._supports_vector_query:
+            self._logger.warning(
+                "Chroma embedding function unavailable; storing memory in-process."
+            )
+            return
 
         try:  # pragma: no cover - needs chromadb runtime
             self._client = chromadb_module.PersistentClient(

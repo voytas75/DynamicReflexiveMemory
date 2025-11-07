@@ -50,7 +50,12 @@ def _check_redis(config: AppConfig) -> List[str]:
     try:
         client.ping()
     except Exception as exc:  # pragma: no cover - runtime dependent
-        raise HealthCheckError(f"Redis connectivity check failed: {exc}") from exc
+        LOGGER.warning(
+            "Redis connectivity check failed (%s); using in-memory fallback.", exc
+        )
+        return [
+            "redis unavailable; using in-memory working memory fallback.",
+        ]
     return []
 
 
@@ -69,7 +74,13 @@ def _check_chromadb(config: AppConfig) -> List[str]:
         client = cast(Any, chromadb_module).PersistentClient(path=str(persist_dir))
         client.list_collections()
     except Exception as exc:  # pragma: no cover - runtime dependent
-        raise HealthCheckError(f"ChromaDB availability check failed: {exc}") from exc
+        LOGGER.warning(
+            "ChromaDB availability check failed (%s); using in-memory memory store.",
+            exc,
+        )
+        return [
+            "chromadb unavailable; in-memory persistence activated.",
+        ]
     return []
 
 
