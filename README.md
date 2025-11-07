@@ -14,6 +14,7 @@ to deliver continuity between reasoning sessions.
 - Strictly typed configuration and models via Pydantic and dataclasses.
 - Append-only memory revision log for audit trails and rollback instrumentation.
 - Remembers the most recent workflow preference and GUI window size between sessions.
+- In-GUI settings editor for modifying the configuration without leaving the application.
 
 ## Getting Started
 

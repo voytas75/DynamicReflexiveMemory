@@ -108,7 +108,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        config_path = resolve_config_path(args.config) if args.config else None
+        config_path = resolve_config_path(args.config) if args.config else resolve_config_path()
         config = get_app_config(config_path)
         setup_logging(args.logging_config)
         user_settings = UserSettingsManager()
@@ -125,7 +125,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     if args.mode == "gui":
-        gui_result = launch_gui(config, user_settings=user_settings)
+        gui_result = launch_gui(
+            config,
+            user_settings=user_settings,
+            config_path=config_path,
+        )
         if gui_result is not None:
             return gui_result
         logging.getLogger("drm").info("Falling back to CLI mode.")

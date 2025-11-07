@@ -4,6 +4,7 @@ Updates:
     v0.1 - 2025-11-06 - Added Pydantic-based loader for core configuration.
     v0.2 - 2025-11-07 - Added LiteLLM debug toggle to LLM configuration schema.
     v0.3 - 2025-11-07 - Added review model provider overrides.
+    v0.4 - 2025-11-07 - Added helpers for persisting updated application configuration.
 """
 
 from __future__ import annotations
@@ -154,3 +155,23 @@ def load_app_config(path: Optional[Path] = None) -> AppConfig:
 def get_app_config(path: Optional[Path] = None) -> AppConfig:
     """Memoised accessor for the application configuration."""
     return load_app_config(path)
+
+
+def save_app_config(config: AppConfig, path: Optional[Path] = None) -> None:
+    """Persist the provided configuration to disk."""
+    target_path = path or CONFIG_FILE
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ConfigError(f"Unable to prepare configuration directory: {exc}") from exc
+
+    payload = config.model_dump(mode="python")
+    try:
+        target_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise ConfigError(f"Unable to write configuration: {exc}") from exc
+
+    get_app_config.cache_clear()

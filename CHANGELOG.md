@@ -30,6 +30,7 @@ All notable changes to this project will be documented in this file. The format 
 - Persisted user settings (workflow preference and window geometry) in `data/user_settings.json`.
 - CLI honours the last selected workflow when no override is provided.
 - GUI restores the last workflow selection and window size on startup.
+- GUI settings dialog for editing the active `config.json` without leaving the application.
 
 ### Changed
 - Startup health checks now warn (rather than exit) when Redis or ChromaDB are unavailable, enabling seamless in-memory fallbacks.

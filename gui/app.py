@@ -9,6 +9,7 @@ Updates:
     v0.6 - 2025-11-07 - Guarded headless environments to avoid Qt crashes and fall back to CLI.
     v0.7 - 2025-11-07 - Added human review feedback capture and drift mitigation controls.
     v0.8 - 2025-11-07 - Restored user preferences for workflow selection and window geometry.
+    v0.9 - 2025-11-07 - Added settings dialog for editing configuration values.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, TYPE_CHECKING, cast
 
 from config.settings import AppConfig
@@ -26,6 +28,7 @@ from core.exceptions import DRMError, MemoryError, WorkflowError
 from core.live_loop import LiveTaskLoop
 from core.memory_manager import MemoryManager
 from core.user_settings import UserSettings, UserSettingsManager
+from gui.settings_dialog import SettingsDialog
 from models.memory import WorkingMemoryItem
 from models.workflows import TaskRunOutcome
 
@@ -33,6 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only imports
     from PySide6.QtCore import QObject, QThread, Signal, Slot
     from PySide6.QtWidgets import (
         QApplication,
+        QDialog,
         QComboBox,
         QHBoxLayout,
         QLabel,
@@ -49,6 +53,7 @@ else:  # pragma: no cover - runtime optional dependency
         from PySide6.QtCore import QObject, QThread, Signal, Slot
         from PySide6.QtWidgets import (
             QApplication,
+            QDialog,
             QComboBox,
             QHBoxLayout,
             QLabel,
@@ -171,6 +176,12 @@ else:  # pragma: no cover - runtime optional dependency
             def addTab(self, *_: Any, **__: Any) -> None:
                 pass
 
+        class QDialog(QWidget):
+            Accepted = 1
+
+            def exec(self) -> int:
+                raise RuntimeError("PySide6 is required for GUI operation")
+
         class QMessageBox:
             @staticmethod
             def information(*_: Any, **__: Any) -> None:
@@ -273,6 +284,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         controller: SelfAdjustingController,
         task_loop: LiveTaskLoop,
         user_settings: Optional[UserSettingsManager] = None,
+        config_path: Optional[Path] = None,
     ) -> None:
         super().__init__()
         self._config = config
@@ -283,16 +295,17 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._current_worker: Optional[TaskExecutionWorker] = None
         self._recent_outcomes: List[TaskRunOutcome] = []
         self._user_settings = user_settings
+        self._config_path = config_path or Path("config/config.json")
         self.setWindowTitle("Dynamic Reflexive Memory")
         layout = QVBoxLayout(self)
 
-        header = QLabel(
+        self._header_label = QLabel(
             "<b>Dynamic Reflexive Memory</b><br>"
             f"Default Workflow: {config.llm.default_workflow}<br>"
             f"Review Enabled: {config.review.enabled}"
         )
-        header.setWordWrap(True)
-        layout.addWidget(header)
+        self._header_label.setWordWrap(True)
+        layout.addWidget(self._header_label)
 
         controls_row = QHBoxLayout()
         self._workflow_selector = QComboBox()
@@ -304,6 +317,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             self._workflow_selector.addItem(name, userData=name)
         controls_row.addWidget(QLabel("Workflow:"))
         controls_row.addWidget(self._workflow_selector)
+
+        settings_button = QPushButton("Settings")
+        cast(Any, settings_button.clicked).connect(self._open_settings_dialog)
+        controls_row.addWidget(settings_button)
 
         if user_settings is not None:
             self._apply_saved_preferences(user_settings.settings)
@@ -657,6 +674,55 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         if index != -1:
             self._workflow_selector.setCurrentIndex(index)
 
+    def _open_settings_dialog(self) -> None:
+        """Launch the settings dialog and apply a new configuration if saved."""
+        if self._worker_thread and self._worker_thread.isRunning():
+            QMessageBox.warning(
+                self,
+                "Task Running",
+                "A task is currently executing. Wait for it to finish before opening settings.",
+            )
+            return
+
+        dialog = SettingsDialog(self._config, self._config_path, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        new_config = dialog.result_config()
+        if new_config is None:
+            return
+
+        self._apply_new_config(new_config)
+
+    def _apply_new_config(self, new_config: AppConfig) -> None:
+        """Rebuild runtime components after a configuration update."""
+        self._config = new_config
+        self._controller = SelfAdjustingController(new_config)
+        self._memory_manager = MemoryManager(new_config)
+        self._task_loop = LiveTaskLoop(
+            new_config,
+            memory_manager=self._memory_manager,
+            controller=self._controller,
+            user_settings=self._user_settings,
+        )
+
+        self._header_label.setText(
+            "<b>Dynamic Reflexive Memory</b><br>"
+            f"Default Workflow: {new_config.llm.default_workflow}<br>"
+            f"Review Enabled: {new_config.review.enabled}"
+        )
+
+        self._workflow_selector.blockSignals(True)
+        self._workflow_selector.clear()
+        self._workflow_selector.addItem(
+            f"Auto ({new_config.llm.default_workflow})", userData=None
+        )
+        for name in new_config.llm.workflows.keys():
+            self._workflow_selector.addItem(name, userData=name)
+        self._workflow_selector.blockSignals(False)
+
+        self._refresh_memory_snapshot()
+
     def closeEvent(self, event: Any) -> None:  # pragma: no cover - GUI runtime
         """Persist user preferences when the window closes."""
         if self._user_settings:
@@ -675,7 +741,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
 
 
 def launch_gui(
-    config: AppConfig, *, user_settings: Optional[UserSettingsManager] = None
+    config: AppConfig,
+    *,
+    user_settings: Optional[UserSettingsManager] = None,
+    config_path: Optional[Path] = None,
 ) -> Optional[int]:
     """Launch the PySide6 GUI; returns exit code or None if GUI unavailable."""
     if QApplication is None:
@@ -719,6 +788,7 @@ def launch_gui(
         controller,
         task_loop,
         user_settings=user_settings,
+        config_path=config_path,
     )
     window.show()
     return app.exec()
