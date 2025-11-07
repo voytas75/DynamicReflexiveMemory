@@ -133,10 +133,11 @@ The PySide6 dashboard displays:
 - Latest drift advisory from the self-adjusting controller plus history pulled
   from working memory keys.
 - Tabbed panels for recent outputs and review history so you can inspect results and audits side-by-side.
-- Manual refresh button to inspect updates after CLI or automated runs.
+- Telemetry dashboard streaming live memory metrics, drift advisories, and rolling review history via the in-process telemetry feed.
+- Manual refresh button to inspect updates after CLI or automated runs when telemetry is unavailable.
 
 ## Roadmap
 
 1. Implement Redis integration tests with docker-compose fixtures.
-2. Expand GUI to display live memory metrics and review history.
+2. Expose the telemetry feed via WebSocket for external observers and dashboards.
 3. Add persistence and analytics for drift detection outcomes.

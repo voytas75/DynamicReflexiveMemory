@@ -8,6 +8,7 @@ Updates:
 from __future__ import annotations
 
 import shutil
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ from models.memory import WorkingMemoryItem
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = PROJECT_ROOT / "docker-compose.yml"
 REDIS_SERVICE = "redis"
+TEST_REDIS_PORT = 6379
 
 
 class _RedisServiceController:
@@ -72,6 +74,11 @@ def redis_service() -> Iterator[_RedisServiceController]:
     if not COMPOSE_FILE.exists():
         pytest.skip("docker-compose.yml not available for Redis integration tests.")
 
+    if _is_port_in_use("127.0.0.1", TEST_REDIS_PORT):
+        pytest.skip(
+            f"Port {TEST_REDIS_PORT} is already in use; stop the local Redis service or free the port before running integration tests."
+        )
+
     controller = _RedisServiceController(COMPOSE_FILE)
     controller.up()
     try:
@@ -84,9 +91,17 @@ def redis_service() -> Iterator[_RedisServiceController]:
         controller.down()
 
 
+def _is_port_in_use(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        result = sock.connect_ex((host, port))
+        return result == 0
+
+
 def _build_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ttl: int = 3) -> RedisMemoryStore:
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
     config = load_app_config()
+    config.memory.redis.port = TEST_REDIS_PORT
     config.memory.redis.ttl_seconds = ttl
     return RedisMemoryStore(config)
 

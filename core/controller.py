@@ -8,6 +8,7 @@ Updates:
         feedback.
     v0.4 - 2025-11-07 - Logged workflow bias snapshots when drift triggers.
     v0.5 - 2025-11-07 - Added SLO tracking and mitigation planning for drift responses.
+    v0.6 - 2025-11-08 - Published drift telemetry events for GUI visualisation.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from statistics import mean
 from typing import Deque, Dict, List, Optional
 
 from config.settings import AppConfig
+from core.telemetry import publish_event
 from models.memory import ReviewRecord
 from models.workflows import TaskResult, WorkflowSelection
 
@@ -86,6 +88,24 @@ class SelfAdjustingController:
             slo_breaches,
         )
         self._last_advisory = advisory
+        publish_event(
+            "controller.performance",
+            workflow=selection.workflow,
+            latency=result.latency_seconds,
+            verdict=verdict,
+            slo_breaches=slo_breaches,
+            advisory=advisory,
+            workflow_biases=dict(self._workflow_biases),
+        )
+        if advisory:
+            publish_event(
+                "controller.drift",
+                advisory=advisory,
+                workflow=selection.workflow,
+                latency=result.latency_seconds,
+                verdict=verdict,
+                slo_breaches=slo_breaches,
+            )
         return advisory
 
     def _assess_drift(self) -> Optional[str]:
@@ -109,6 +129,7 @@ class SelfAdjustingController:
             self._logger.warning(advisory)
             return advisory
         return None
+
     def _evaluate_slos(
         self,
         result: TaskResult,

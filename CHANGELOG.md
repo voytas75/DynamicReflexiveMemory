@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/) and dates use ISO-8601 (`YYYY-MM-DD`).
 
+## [0.1.7] - 2025-11-08
+
+### Added
+- PySide6 telemetry dashboard streaming live memory metrics, drift advisories, and review history panes.
+- In-process telemetry feed emitting controller drift signals and review records for GUI consumption.
+
+### Changed
+- Memory manager now snapshots and publishes memory metrics after mutations to keep the GUI in sync.
+
 ## [0.1.6] - 2025-11-08
 
 ### Added

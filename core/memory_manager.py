@@ -8,6 +8,7 @@ Updates:
     v0.5 - 2025-11-07 - Instrumented memory operations with telemetry spans and metrics.
     v0.6 - 2025-11-07 - Added retrieval helpers, tamper-evident revision hashing, and replay utilities.
     v0.7 - 2025-11-08 - Added resilient Redis reconnection and fallback handling.
+    v0.8 - 2025-11-08 - Published telemetry metrics snapshots for GUI monitoring.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, cast
 
 from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import MemoryError
-from core.telemetry import emit_metric, log_span
+from core.telemetry import emit_metric, log_span, publish_event
 from models.memory import (
     EpisodicMemoryEntry,
     ReviewRecord,
@@ -751,6 +752,7 @@ class MemoryManager:
             self._redis_store.put(item)
             self._revision_logger.log("working", item.key, payload)
         emit_metric("memory.write", layer="working")
+        self._publish_metrics_snapshot()
 
     def get_working_item(self, key: str) -> Optional[WorkingMemoryItem]:
         """Retrieve a working memory item if present."""
@@ -765,6 +767,7 @@ class MemoryManager:
             self._chroma_store.add_episodic(entry)
             self._revision_logger.log("episodic", entry.id, entry_dict)
         emit_metric("memory.write", layer="episodic")
+        self._publish_metrics_snapshot()
 
     def record_semantic(self, node: SemanticNode) -> None:
         """Append a new semantic node."""
@@ -774,6 +777,7 @@ class MemoryManager:
             self._chroma_store.add_semantic(node)
             self._revision_logger.log("semantic", node.id, node_dict)
         emit_metric("memory.write", layer="semantic")
+        self._publish_metrics_snapshot()
 
     def record_review(self, record: ReviewRecord) -> None:
         """Persist a review record after task execution."""
@@ -783,6 +787,8 @@ class MemoryManager:
             self._chroma_store.add_review(record)
             self._revision_logger.log("review", record.id, record_dict)
         emit_metric("memory.write", layer="review")
+        publish_event("review.recorded", review=record_dict)
+        self._publish_metrics_snapshot()
 
     def get_semantic_node(self, node_id: str) -> Optional[SemanticNode]:
         """Return a semantic node by id, or None when unavailable."""
@@ -1052,10 +1058,47 @@ class MemoryManager:
         if summary:
             self._logger.info("Drift mitigation applied%s: %s", context, summary)
             emit_metric("memory.drift.mitigation", value=1, **summary)
+            publish_event(
+                "memory.drift.mitigation",
+                summary=summary,
+                task_id=task_id or "n/a",
+            )
         else:
             self._logger.debug("Drift mitigation produced no changes%s.", context)
 
+        self._publish_metrics_snapshot()
         return summary
+
+    def snapshot_metrics(self) -> Dict[str, int]:
+        """Snapshot counts across memory layers for telemetry."""
+        metrics: Dict[str, int] = {}
+        working_items: List[WorkingMemoryItem] = []
+        try:
+            working_items = self.list_working_items()
+            metrics["working_items"] = len(working_items)
+            metrics["drift_advisories"] = sum(
+                1 for item in working_items if item.key.endswith(":drift")
+            )
+        except Exception as exc:  # pragma: no cover - defensive path
+            self._logger.debug("Unable to enumerate working memory for metrics: %s", exc)
+
+        for layer in ("episodic", "semantic", "review"):
+            key = f"{layer}_records"
+            try:
+                metrics[key] = len(self.list_layer(layer))
+            except MemoryError as exc:
+                self._logger.debug("Unable to enumerate %s layer for metrics: %s", layer, exc)
+
+        return metrics
+
+    def _publish_metrics_snapshot(self) -> None:
+        try:
+            metrics = self.snapshot_metrics()
+        except Exception as exc:  # pragma: no cover - defensive path
+            self._logger.debug("Skipping telemetry metrics snapshot: %s", exc)
+            return
+        if metrics:
+            publish_event("memory.metrics", **metrics)
 
     def _hydrate_semantic(self, payload: Dict[str, object]) -> Optional[SemanticNode]:
         try:

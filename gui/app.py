@@ -10,6 +10,7 @@ Updates:
     v0.7 - 2025-11-07 - Added human review feedback capture and drift mitigation controls.
     v0.8 - 2025-11-07 - Restored user preferences for workflow selection and window geometry.
     v0.9 - 2025-11-07 - Added settings dialog for editing configuration values.
+    v0.10 - 2025-11-08 - Wired telemetry-driven metrics, drift advisories, and review panes.
 """
 
 from __future__ import annotations
@@ -18,22 +19,24 @@ import logging
 import os
 import subprocess
 import sys
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, TYPE_CHECKING, cast
+from typing import Any, Deque, Dict, List, Mapping, Optional, Sequence, TYPE_CHECKING, cast
 
 from config.settings import AppConfig
 from core.controller import SelfAdjustingController
 from core.exceptions import DRMError, MemoryError, WorkflowError
 from core.live_loop import LiveTaskLoop
 from core.memory_manager import MemoryManager
+from core.telemetry import TelemetryEvent, drain_telemetry
 from core.user_settings import UserSettings, UserSettingsManager
 from gui.settings_dialog import SettingsDialog
 from models.memory import WorkingMemoryItem
 from models.workflows import TaskRunOutcome
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only imports
-    from PySide6.QtCore import QObject, QThread, Signal, Slot
+    from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
     from PySide6.QtWidgets import (
         QApplication,
         QDialog,
@@ -50,7 +53,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only imports
     )
 else:  # pragma: no cover - runtime optional dependency
     try:
-        from PySide6.QtCore import QObject, QThread, Signal, Slot
+        from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
         from PySide6.QtWidgets import (
             QApplication,
             QDialog,
@@ -101,6 +104,22 @@ else:  # pragma: no cover - runtime optional dependency
 
             def emit(self, *_: Any, **__: Any) -> None:
                 pass
+
+        class QTimer:
+            def __init__(self, *_: Any, **__: Any) -> None:
+                self.timeout = Signal()
+
+            def setInterval(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+            def isActive(self) -> bool:
+                return False
 
         def Slot(*_args: Any, **_kwargs: Any):
             def decorator(func: Any) -> Any:
@@ -296,6 +315,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._worker_thread: Optional[QThread] = None
         self._current_worker: Optional[TaskExecutionWorker] = None
         self._recent_outcomes: List[TaskRunOutcome] = []
+        self._latest_metrics: Dict[str, object] = {}
+        self._drift_events: Deque[TelemetryEvent] = deque(maxlen=15)
+        self._review_history_buffer: List[Dict[str, object]] = []
         self._user_settings = user_settings
         self._config_path = config_path or Path("config/config.json")
         self.setWindowTitle("Dynamic Reflexive Memory")
@@ -361,6 +383,19 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._results_tab.addTab(self._review_history_view, "Review History")
         layout.addWidget(self._results_tab)
 
+        self._telemetry_tab = QTabWidget()
+        self._metrics_view = QTextEdit()
+        self._metrics_view.setReadOnly(True)
+        self._metrics_view.setPlaceholderText("Awaiting telemetry metrics…")
+        self._telemetry_tab.addTab(self._metrics_view, "Memory Metrics")
+
+        self._drift_history_view = QTextEdit()
+        self._drift_history_view.setReadOnly(True)
+        self._drift_history_view.setPlaceholderText("No drift advisories yet.")
+        self._telemetry_tab.addTab(self._drift_history_view, "Drift Advisories")
+
+        layout.addWidget(self._telemetry_tab)
+
         self._memory_view = QTextEdit()
         self._memory_view.setReadOnly(True)
         layout.addWidget(self._memory_view)
@@ -386,6 +421,11 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         layout.addWidget(mitigation_button)
 
         self._refresh_memory_snapshot()
+
+        self._telemetry_timer = QTimer(self)
+        self._telemetry_timer.setInterval(1500)
+        cast(Any, self._telemetry_timer.timeout).connect(self._poll_telemetry_feed)
+        self._telemetry_timer.start()
 
     def _handle_run_task(self) -> None:
         """Execute a task using the live loop and render the outcome."""
@@ -510,7 +550,8 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             item for item in working_items if item.key.endswith(":drift")
         ]
         drift_summary = self._format_drift_summary(drift_items)
-        self._update_review_history_view(reviews)
+        self._replace_review_records(reviews)
+        self._update_review_history_view()
 
         lines = [
             "=== Working Memory ===",
@@ -530,6 +571,18 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
 
         self._drift_label.setText(drift_summary)
         self._bias_label.setText(self._format_bias_summary(self._controller.workflow_biases))
+        try:
+            metrics_snapshot = self._memory_manager.snapshot_metrics()
+        except Exception as exc:  # pragma: no cover - defensive path
+            LOGGER.debug("Unable to refresh metrics snapshot: %s", exc)
+        else:
+            self._latest_metrics = {
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                **metrics_snapshot,
+            }
+            self._render_memory_metrics()
+
+        self._render_drift_history()
 
     @staticmethod
     def _format_working_item(item: WorkingMemoryItem) -> str:
@@ -605,34 +658,33 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._recent_output_view.setPlainText("\n".join(lines))
 
     def _update_review_history_view(
-        self, reviews: Optional[List[Dict[str, object]]] = None
+        self,
+        reviews: Optional[List[Dict[str, object]]] = None,
     ) -> None:
         """Render review history in the dedicated view."""
-        if reviews is None:
+        if reviews is not None:
+            self._replace_review_records(reviews)
+
+        records = list(self._review_history_buffer)
+        if not records and reviews is None:
             try:
-                reviews = self._memory_manager.list_layer("review")
+                fetched = self._memory_manager.list_layer("review")
             except MemoryError as exc:
                 LOGGER.error("Failed to load review history: %s", exc)
                 self._review_history_view.setPlainText(f"Unable to load review history: {exc}")
                 return
+            self._replace_review_records(fetched)
+            records = list(self._review_history_buffer)
 
-        if not reviews:
+        if not records:
             self._review_history_view.setPlainText("No review records yet.")
             return
 
-        def _parse_timestamp(payload: Dict[str, object]) -> datetime:
-            value = payload.get("created_at")
-            if isinstance(value, datetime):
-                return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-            if isinstance(value, str):
-                try:
-                    parsed = datetime.fromisoformat(value)
-                except ValueError:
-                    return datetime.now(timezone.utc)
-                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-            return datetime.now(timezone.utc)
-
-        sorted_records = sorted(reviews, key=_parse_timestamp, reverse=True)[:5]
+        sorted_records = sorted(
+            records,
+            key=lambda payload: self._coerce_datetime(payload.get("created_at")),
+            reverse=True,
+        )[:5]
         lines: List[str] = []
         for record in sorted_records:
             notes_raw = record.get("notes")
@@ -656,6 +708,155 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
                 )
             )
         self._review_history_view.setPlainText("\n".join(lines))
+
+    def _poll_telemetry_feed(self) -> None:
+        """Drain telemetry queue and refresh UI panels."""
+        events = drain_telemetry(48)
+        if not events:
+            return
+
+        metrics_updated = False
+        drift_updated = False
+        review_updated = False
+
+        for event in events:
+            if event.name == "memory.metrics":
+                metrics_updated = True
+                snapshot = dict(event.payload)
+                snapshot["captured_at"] = event.timestamp.isoformat()
+                self._latest_metrics = snapshot
+            elif event.name == "controller.drift":
+                drift_updated = True
+                self._drift_events.append(event)
+            elif event.name == "memory.drift.mitigation":
+                drift_updated = True
+                summary_payload = event.payload.get("summary")
+                if isinstance(summary_payload, Mapping):
+                    self._mitigation_label.setText(
+                        self._build_mitigation_label(
+                            "Mitigation",
+                            cast(Mapping[str, object], summary_payload),
+                        )
+                    )
+            elif event.name == "controller.performance":
+                biases = event.payload.get("workflow_biases")
+                if isinstance(biases, Mapping):
+                    self._bias_label.setText(
+                        self._format_bias_summary(cast(Mapping[str, float], biases))
+                    )
+            elif event.name == "review.recorded":
+                review_payload = event.payload.get("review")
+                if isinstance(review_payload, dict):
+                    review_updated = True
+                    self._store_review_record(review_payload)
+
+        if metrics_updated:
+            self._render_memory_metrics()
+        if drift_updated:
+            self._render_drift_history()
+            self._update_drift_label_from_events()
+        if review_updated:
+            self._update_review_history_view()
+
+    def _render_memory_metrics(self) -> None:
+        """Render the latest memory metrics snapshot."""
+        if not self._latest_metrics:
+            self._metrics_view.setPlainText("Awaiting telemetry metrics…")
+            return
+
+        metrics = self._latest_metrics
+        captured = str(metrics.get("captured_at", "n/a"))
+        working = metrics.get("working_items", "n/a")
+        episodic = metrics.get("episodic_records", "n/a")
+        semantic = metrics.get("semantic_records", "n/a")
+        review = metrics.get("review_records", "n/a")
+        drift = metrics.get("drift_advisories", "n/a")
+        lines = [
+            f"Captured: {captured}",
+            f"Working items: {working}",
+            f"Episodic records: {episodic}",
+            f"Semantic nodes: {semantic}",
+            f"Review records: {review}",
+            f"Drift advisories in working memory: {drift}",
+        ]
+        self._metrics_view.setPlainText("\n".join(lines))
+
+    def _render_drift_history(self) -> None:
+        """Render controller drift advisories."""
+        if not self._drift_events:
+            self._drift_history_view.setPlainText("No drift advisories yet.")
+            return
+
+        lines: List[str] = []
+        for event in reversed(self._drift_events):
+            timestamp = event.timestamp.isoformat()
+            workflow = str(event.payload.get("workflow") or "unknown")
+            advisory = str(event.payload.get("advisory") or "n/a")
+            slo_raw = event.payload.get("slo_breaches")
+            if isinstance(slo_raw, list) and slo_raw:
+                slo_text = ", ".join(str(item) for item in slo_raw)
+            else:
+                slo_text = "none"
+            lines.append(
+                f"{timestamp} | workflow={workflow} | slo={slo_text}\n{advisory}"
+            )
+        self._drift_history_view.setPlainText("\n\n".join(lines))
+
+    def _update_drift_label_from_events(self) -> None:
+        """Show latest drift advisory in the headline label."""
+        if not self._drift_events:
+            return
+        latest = self._drift_events[-1]
+        advisory = str(latest.payload.get("advisory") or "None")
+        workflow = latest.payload.get("workflow")
+        workflow_part = f"[{workflow}] " if workflow else ""
+        timestamp = latest.timestamp.isoformat()
+        self._drift_label.setText(
+            f"<b>Drift Advisory:</b> {workflow_part}{advisory} ({timestamp})"
+        )
+
+    def _store_review_record(self, record: Dict[str, object]) -> None:
+        """Persist a review record in the local telemetry buffer."""
+        record_id_raw = record.get("id")
+        record_id = str(record_id_raw) if record_id_raw else None
+        if not record_id:
+            record_id = f"review:{len(self._review_history_buffer) + 1}"
+
+        existing = [
+            item
+            for item in self._review_history_buffer
+            if str(item.get("id") or "") != record_id
+        ]
+        stored = dict(record)
+        stored["id"] = record_id
+        created_at_value = stored.get("created_at")
+        if isinstance(created_at_value, datetime):
+            stored["created_at"] = created_at_value.isoformat()
+        existing.append(stored)
+        existing.sort(key=lambda payload: self._coerce_datetime(payload.get("created_at")))
+        if len(existing) > 15:
+            existing = existing[-15:]
+        self._review_history_buffer = existing
+
+    def _replace_review_records(self, records: Sequence[Dict[str, object]]) -> None:
+        """Replace local review buffer with provided records."""
+        self._review_history_buffer = []
+        for record in records:
+            if isinstance(record, dict):
+                self._store_review_record(record)
+
+    @staticmethod
+    def _coerce_datetime(value: object) -> datetime:
+        """Normalise values into timezone-aware datetimes."""
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                return datetime.now(timezone.utc)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc)
 
     def _set_interaction_enabled(self, enabled: bool) -> None:
         """Enable or disable task interaction widgets."""
@@ -727,6 +928,12 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
 
     def closeEvent(self, event: Any) -> None:  # pragma: no cover - GUI runtime
         """Persist user preferences when the window closes."""
+        timer = getattr(self, "_telemetry_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:
+                pass
         if self._user_settings:
             workflow_data = self._workflow_selector.currentData()
             workflow = workflow_data if isinstance(workflow_data, str) else None
