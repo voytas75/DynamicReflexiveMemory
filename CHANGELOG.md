@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 - Normalised LiteLLM Ollama routing by prefixing model identifiers and supplying explicit provider hints.
+- Expanded executor error logging to surface underlying LiteLLM failures during task runs.
 
 ### Dependencies
 - Added `python-dotenv` to runtime requirements.

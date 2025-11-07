@@ -9,6 +9,7 @@ Updates:
     v0.5 - 2025-11-07 - Normalised Azure provider routing for LiteLLM compatibility.
     v0.6 - 2025-11-07 - Prefixed Ollama models for LiteLLM provider resolution.
     v0.7 - 2025-11-07 - Added explicit Ollama provider hints for LiteLLM routing.
+    v0.8 - 2025-11-07 - Emitted detailed error context when workflows fail.
 """
 
 from __future__ import annotations
@@ -178,6 +179,7 @@ class TaskExecutor:
                     request.workflow,
                     attempt,
                     exc,
+                    exc_info=True,
                 )
                 last_exc = exc
                 break
@@ -187,7 +189,7 @@ class TaskExecutor:
         latency = time.perf_counter() - start_time
         message = f"Workflow '{request.workflow}' failed after {attempt} attempts."
         if "last_exc" in locals():
-            raise WorkflowError(message) from last_exc
+            raise WorkflowError(f"{message} Last error: {last_exc}") from last_exc
         raise WorkflowError(message)
 
     def _build_provider_kwargs(self, provider: str) -> Dict[str, object]:
