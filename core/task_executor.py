@@ -7,6 +7,7 @@ Updates:
     v0.3 - 2025-11-06 - Integrated controller bias into workflow selection metadata.
     v0.4 - 2025-11-07 - Enabled optional LiteLLM debug toggling from configuration.
     v0.5 - 2025-11-07 - Normalised Azure provider routing for LiteLLM compatibility.
+    v0.6 - 2025-11-07 - Prefixed Ollama models for LiteLLM provider resolution.
 """
 
 from __future__ import annotations
@@ -248,10 +249,16 @@ class TaskExecutor:
     def _resolve_model_name(self, workflow_cfg: WorkflowModelConfig) -> str:
         """Normalise provider-specific model identifiers for LiteLLM."""
         model_name = workflow_cfg.model
-        if workflow_cfg.provider.lower() != "azure":
-            return model_name
+        provider = workflow_cfg.provider.lower()
 
-        if model_name.startswith("azure/"):
-            return model_name
+        if provider == "azure":
+            if model_name.startswith("azure/"):
+                return model_name
+            return f"azure/{model_name}"
 
-        return f"azure/{model_name}"
+        if provider == "ollama":
+            if model_name.startswith(("ollama/", "ollama_chat/")):
+                return model_name
+            return f"ollama/{model_name}"
+
+        return model_name
