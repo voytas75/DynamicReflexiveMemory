@@ -15,6 +15,7 @@ import pytest
 from config import settings
 from core.live_loop import LiveTaskLoop
 from core.review import ReviewEngine
+from models.workflows import TaskRequest, TaskResult
 
 
 def _entry_has_user_task(entry: Dict[str, object], expected: str) -> bool:
@@ -186,3 +187,53 @@ def test_resolve_model_configuration_uses_azure_provider(monkeypatch: pytest.Mon
     assert model_name == "azure/gpt-4.1"
     assert kwargs["custom_llm_provider"] == "azure"
     assert kwargs["api_base"] == "https://example.openai.azure.com"
+
+
+def test_review_engine_sets_o_series_temperature(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _load_sample_config(tmp_path)
+    config.review.auto_reviewer_model = "o3-mini"
+    config.review.auto_reviewer_provider = None
+
+    captured: Dict[str, Any] = {}
+
+    def _fake_completion(*args: Any, temperature: float, **kwargs: Any) -> Dict[str, Any]:
+        captured["temperature"] = temperature
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "VERDICT: PASS\n"
+                            "REASONING: Compliant.\n"
+                            "QUALITY_SCORE: 0.9\n"
+                            "SUGGESTIONS:\n"
+                            "- None."
+                        )
+                    }
+                }
+            ],
+            "usage": {},
+        }
+
+    class DummyTimeout(Exception):
+        """Placeholder timeout exception."""
+
+    dummy_litellm = SimpleNamespace(
+        completion=_fake_completion,
+        Timeout=DummyTimeout,
+    )
+    monkeypatch.setattr("core.review.litellm", dummy_litellm)
+
+    engine = ReviewEngine(config)
+    monkeypatch.setattr(
+        engine,
+        "_resolve_model_configuration",
+        lambda: ("o3-mini", {}),
+    )
+
+    request = TaskRequest(workflow="fast", prompt="demo")
+    result = TaskResult(workflow="fast", content="ok", latency_seconds=0.1)
+
+    engine.perform_review(request, result)
+
+    assert captured.get("temperature") == pytest.approx(1.0)

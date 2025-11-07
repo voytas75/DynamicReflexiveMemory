@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 - Startup health checks now warn (rather than exit) when Redis or ChromaDB are unavailable, enabling seamless in-memory fallbacks.
+- Automated review automatically adjusts sampling temperature for OpenAI O-series models to satisfy API constraints.
 ## [0.1.1] - 2025-11-07
 
 ### Added

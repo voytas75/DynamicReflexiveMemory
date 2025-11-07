@@ -8,6 +8,7 @@ Updates:
     v0.5 - 2025-11-07 - Normalised metadata serialisation for automated review payloads.
     v0.6 - 2025-11-07 - Applied provider-aware routing for automated review models.
     v0.7 - 2025-11-07 - Logged automated review failures before surfacing to callers.
+    v0.8 - 2025-11-07 - Adjusted reviewer temperature for O-series OpenAI models.
 """
 
 from __future__ import annotations
@@ -113,6 +114,7 @@ class ReviewEngine:
         try:
             self._logger.debug("Running automated review with model %s", model)
             model_name, provider_kwargs = self._resolve_model_configuration()
+            sampling_temperature = self._resolve_temperature(model_name)
             payload = {
                 "task_prompt": request.prompt,
                 "workflow": request.workflow,
@@ -138,7 +140,7 @@ class ReviewEngine:
                         ),
                     },
                 ],
-                temperature=0.0,
+                temperature=sampling_temperature,
                 request_timeout=self._config.llm.timeouts.request_seconds,
                 **provider_kwargs,
             )
@@ -192,6 +194,15 @@ class ReviewEngine:
         if verdict in {"fail", "failed", "reject"}:
             return "fail-auto"
         return verdict
+
+    @staticmethod
+    def _resolve_temperature(model_name: str) -> float:
+        """Return the sampling temperature to use for the given reviewer model."""
+        normalized = model_name.lower()
+        short_name = normalized.split("/")[-1]
+        if short_name.startswith(("o1", "o3", "o-")) or short_name.startswith("o"):
+            return 1.0
+        return 0.0
 
     def _activate_litellm_debug(self) -> None:
         """Enable LiteLLM debug logging for automated review when configured."""
