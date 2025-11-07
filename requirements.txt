@@ -2,6 +2,6 @@ chromadb==0.5.3
 litellm==1.61.15
 pydantic==2.9.2
 python-dotenv==1.0.1
-PySide6==6.7.3
+PySide6==6.8.2
 redis==5.1.1
 pytest==8.3.3

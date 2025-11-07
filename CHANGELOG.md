@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/) and dates use ISO-8601 (`YYYY-MM-DD`).
 
+## [0.1.5] - 2025-11-07
+
+### Changed
+- Bumped PySide6 runtime dependency to 6.8.2 for latest Qt fixes and stability improvements.
+
 ## [0.1.4] - 2025-11-07
 
 ### Added
