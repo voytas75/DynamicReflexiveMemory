@@ -207,6 +207,8 @@ LOGGER = logging.getLogger("drm.gui")
 
 def _is_gui_environment_configured() -> bool:
     """Return True when the environment advertises GUI support."""
+    if sys.platform.startswith("win"):
+        return True
     if os.environ.get("QT_QPA_PLATFORM"):
         return True
     return any(os.environ.get(var) for var in ("DISPLAY", "WAYLAND_DISPLAY"))
