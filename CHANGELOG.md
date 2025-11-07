@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file. The format 
 ### Changed
 - Controller now emits informative logs when drift triggers workflow bias updates.
 
+### Fixed
+- Prevented GUI startup from crashing on systems without a graphical backend by falling back to CLI mode.
+
 ### Documentation
 - Expanded README with revision logging guidance and clarified ChromaDB deployment model.
 

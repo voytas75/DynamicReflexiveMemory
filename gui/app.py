@@ -6,11 +6,15 @@ Updates:
     v0.3 - 2025-11-07 - Integrated LiveTaskLoop with interactive task execution and drift advisory history.
     v0.4 - 2025-11-06 - Surfaced controller workflow biases in the telemetry panel.
     v0.5 - 2025-11-07 - Displayed recent memory revision history alongside other telemetry.
+    v0.6 - 2025-11-07 - Guarded headless environments to avoid Qt crashes and fall back to CLI.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence, TYPE_CHECKING, cast
 
@@ -185,6 +189,39 @@ else:  # pragma: no cover - runtime optional dependency
                 return 0
 
 LOGGER = logging.getLogger("drm.gui")
+
+
+def _is_gui_environment_configured() -> bool:
+    """Return True when the environment advertises GUI support."""
+    if os.environ.get("QT_QPA_PLATFORM"):
+        return True
+    return any(os.environ.get(var) for var in ("DISPLAY", "WAYLAND_DISPLAY"))
+
+
+def _probe_qt_initialisation() -> tuple[bool, Optional[str]]:
+    """Check whether Qt can be initialised without crashing the main process."""
+    if QApplication is None:
+        return False, "PySide6 is unavailable"
+
+    try:
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from PySide6.QtWidgets import QApplication\napp = QApplication([])",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            env=os.environ.copy(),
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return False, str(exc)
+
+    if probe.returncode != 0:
+        stderr_output = probe.stderr.decode().strip() or None
+        return False, stderr_output
+    return True, None
 
 
 class TaskExecutionWorker(QObject):  # pragma: no cover - requires GUI runtime
@@ -544,7 +581,26 @@ def launch_gui(config: AppConfig) -> Optional[int]:
         )
         return None
 
-    app = QApplication([])
+    if not _is_gui_environment_configured():
+        LOGGER.warning(
+            "No graphical display detected; skipping GUI launch. "
+            "Set DISPLAY/WAYLAND_DISPLAY or QT_QPA_PLATFORM to enable GUI mode."
+        )
+        return None
+
+    probe_ok, probe_error = _probe_qt_initialisation()
+    if not probe_ok:
+        details = f": {probe_error}" if probe_error else ""
+        LOGGER.error(
+            "Qt platform backend unavailable%s; falling back to CLI mode.", details
+        )
+        return None
+
+    try:
+        app = QApplication([])
+    except Exception as exc:  # pragma: no cover - depends on Qt runtime
+        LOGGER.error("Failed to initialise Qt application: %s", exc, exc_info=True)
+        return None
     memory_manager = MemoryManager(config)
     controller = SelfAdjustingController(config)
     task_loop = LiveTaskLoop(

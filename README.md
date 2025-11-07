@@ -42,6 +42,9 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
    python main.py --mode cli --task "Draft integration plan"  # CLI fallback
    ```
 
+   The runner detects headless environments automatically and will fall back to
+   CLI mode when no graphical backend is available.
+
 ## Configuration
 
 - `config/config.json` controls workflows, providers, and memory locations.
