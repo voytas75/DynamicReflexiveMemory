@@ -8,6 +8,7 @@ Updates:
     v0.4 - 2025-11-07 - Enabled optional LiteLLM debug toggling from configuration.
     v0.5 - 2025-11-07 - Normalised Azure provider routing for LiteLLM compatibility.
     v0.6 - 2025-11-07 - Prefixed Ollama models for LiteLLM provider resolution.
+    v0.7 - 2025-11-07 - Added explicit Ollama provider hints for LiteLLM routing.
 """
 
 from __future__ import annotations
@@ -210,8 +211,12 @@ class TaskExecutor:
             }
 
         if provider.lower() == "ollama":
-            base_url = getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            return {"base_url": base_url.rstrip("/")}
+            base_url = getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+            return {
+                "base_url": base_url,
+                "api_base": base_url,
+                "custom_llm_provider": "ollama",
+            }
 
         return {}
 
