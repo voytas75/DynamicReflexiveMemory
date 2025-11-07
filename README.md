@@ -43,6 +43,7 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
 ## Configuration
 
 - `config/config.json` controls workflows, providers, and memory locations.
+- `config/config.example.json` provides a starter template; copy it to `config/config.json` and adjust credentials before first run.
 - `config/logging.conf` sets structured logging output.
 - Environment variables are loaded automatically from a local `.env` file (via `python-dotenv`) if present.
 - Provider credentials:

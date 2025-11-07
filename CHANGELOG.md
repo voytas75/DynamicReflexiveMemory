@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 - Automatic loading of environment variables from `.env` via `python-dotenv` at application startup.
+- Tracked `config/config.example.json` template for bootstrapping new environments.
 
 ### Changed
 - Normalised LiteLLM Ollama routing by prefixing model identifiers and supplying explicit provider hints.
