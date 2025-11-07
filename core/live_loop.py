@@ -7,6 +7,7 @@ Updates:
         task selection.
     v0.4 - 2025-11-07 - Linked semantic concepts and surfaced relation context for prompts.
     v0.5 - 2025-11-07 - Added retrieval-focused context loading and controller mitigation plans.
+    v0.6 - 2025-11-07 - Recorded workflow preference in persistent user settings.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from core.memory_manager import MemoryManager
 from core.prompt_engine import AdaptivePromptEngine, PromptContext
 from core.review import ReviewEngine
 from core.task_executor import TaskExecutor
+from core.user_settings import UserSettingsManager
 from models.memory import (
     EpisodicMemoryEntry,
     ReviewRecord,
@@ -54,6 +56,7 @@ class LiveTaskLoop:
         executor: Optional[TaskExecutor] = None,
         review_engine: Optional[ReviewEngine] = None,
         controller: Optional[SelfAdjustingController] = None,
+        user_settings: Optional[UserSettingsManager] = None,
     ) -> None:
         self._config = config
         self._memory_manager = memory_manager or MemoryManager(config)
@@ -62,6 +65,7 @@ class LiveTaskLoop:
         self._executor = executor or TaskExecutor(config, controller=self._controller)
         self._review_engine = review_engine or ReviewEngine(config)
         self._logger = LOGGER
+        self._user_settings = user_settings
 
     def run_task(
         self,
@@ -179,6 +183,9 @@ class LiveTaskLoop:
             key=f"{working_key_prefix}:result",
             payload=result_payload,
         )
+
+        if self._user_settings:
+            self._user_settings.update(last_workflow=selection.workflow)
 
         return TaskRunOutcome(
             selection=selection,

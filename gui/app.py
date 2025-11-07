@@ -8,6 +8,7 @@ Updates:
     v0.5 - 2025-11-07 - Displayed recent memory revision history alongside other telemetry.
     v0.6 - 2025-11-07 - Guarded headless environments to avoid Qt crashes and fall back to CLI.
     v0.7 - 2025-11-07 - Added human review feedback capture and drift mitigation controls.
+    v0.8 - 2025-11-07 - Restored user preferences for workflow selection and window geometry.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from core.controller import SelfAdjustingController
 from core.exceptions import DRMError, MemoryError, WorkflowError
 from core.live_loop import LiveTaskLoop
 from core.memory_manager import MemoryManager
+from core.user_settings import UserSettings, UserSettingsManager
 from models.memory import WorkingMemoryItem
 from models.workflows import TaskRunOutcome
 
@@ -270,6 +272,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         memory_manager: MemoryManager,
         controller: SelfAdjustingController,
         task_loop: LiveTaskLoop,
+        user_settings: Optional[UserSettingsManager] = None,
     ) -> None:
         super().__init__()
         self._config = config
@@ -279,6 +282,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._worker_thread: Optional[QThread] = None
         self._current_worker: Optional[TaskExecutionWorker] = None
         self._recent_outcomes: List[TaskRunOutcome] = []
+        self._user_settings = user_settings
         self.setWindowTitle("Dynamic Reflexive Memory")
         layout = QVBoxLayout(self)
 
@@ -300,6 +304,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             self._workflow_selector.addItem(name, userData=name)
         controls_row.addWidget(QLabel("Workflow:"))
         controls_row.addWidget(self._workflow_selector)
+
+        if user_settings is not None:
+            self._apply_saved_preferences(user_settings.settings)
 
         self._task_input = QPlainTextEdit()
         self._task_input.setPlaceholderText("Enter task prompt...")
@@ -638,8 +645,38 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._feedback_input.setEnabled(enabled)
         self._run_button.setEnabled(enabled)
 
+    def _apply_saved_preferences(self, settings: UserSettings) -> None:
+        """Restore workflow selection and window geometry from saved settings."""
+        if settings.window_width and settings.window_height:
+            self.resize(settings.window_width, settings.window_height)
 
-def launch_gui(config: AppConfig) -> Optional[int]:
+        desired = settings.last_workflow
+        index = self._workflow_selector.findData(desired)
+        if index == -1 and desired is not None:
+            index = self._workflow_selector.findData(None)
+        if index != -1:
+            self._workflow_selector.setCurrentIndex(index)
+
+    def closeEvent(self, event: Any) -> None:  # pragma: no cover - GUI runtime
+        """Persist user preferences when the window closes."""
+        if self._user_settings:
+            workflow_data = self._workflow_selector.currentData()
+            workflow = workflow_data if isinstance(workflow_data, str) else None
+            size = self.size()
+            try:
+                self._user_settings.update(
+                    last_workflow=workflow,
+                    window_width=size.width(),
+                    window_height=size.height(),
+                )
+            except Exception as exc:
+                LOGGER.warning("Failed to persist user settings on close: %s", exc)
+        super().closeEvent(event)
+
+
+def launch_gui(
+    config: AppConfig, *, user_settings: Optional[UserSettingsManager] = None
+) -> Optional[int]:
     """Launch the PySide6 GUI; returns exit code or None if GUI unavailable."""
     if QApplication is None:
         LOGGER.error(
@@ -674,7 +711,14 @@ def launch_gui(config: AppConfig) -> Optional[int]:
         config,
         memory_manager=memory_manager,
         controller=controller,
+        user_settings=user_settings,
     )
-    window = DRMWindow(config, memory_manager, controller, task_loop)
+    window = DRMWindow(
+        config,
+        memory_manager,
+        controller,
+        task_loop,
+        user_settings=user_settings,
+    )
     window.show()
     return app.exec()

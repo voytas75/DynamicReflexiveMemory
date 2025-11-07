@@ -13,6 +13,7 @@ to deliver continuity between reasoning sessions.
 - Hybrid automated/human review loop feeding self-adjustment heuristics.
 - Strictly typed configuration and models via Pydantic and dataclasses.
 - Append-only memory revision log for audit trails and rollback instrumentation.
+- Remembers the most recent workflow preference and GUI window size between sessions.
 
 ## Getting Started
 

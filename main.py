@@ -6,6 +6,7 @@ Updates:
     v0.3 - 2025-11-06 - Added startup health checks with warning surface.
     v0.4 - 2025-11-07 - Loaded environment variables from .env during startup.
     v0.5 - 2025-11-07 - Captured optional human review feedback in CLI workflows.
+    v0.6 - 2025-11-07 - Persisted workflow preference and window state between sessions.
 """
 
 from __future__ import annotations
@@ -20,8 +21,9 @@ from dotenv import load_dotenv
 
 from config.settings import AppConfig, get_app_config, resolve_config_path
 from core.exceptions import DRMError, HealthCheckError, WorkflowError
-from core.live_loop import LiveTaskLoop
 from core.health import run_startup_checks
+from core.live_loop import LiveTaskLoop
+from core.user_settings import UserSettingsManager
 from gui.app import launch_gui
 
 
@@ -42,15 +44,19 @@ def run_cli(
     task: Optional[str] = None,
     workflow: Optional[str] = None,
     human_feedback: Optional[str] = None,
+    user_settings: Optional[UserSettingsManager] = None,
 ) -> None:
     """Run a simple CLI workflow as a fallback when GUI is unavailable."""
     logger = logging.getLogger("drm.cli")
-    task_loop = LiveTaskLoop(config)
+    task_loop = LiveTaskLoop(config, user_settings=user_settings)
     prompt_text = task or "Summarise today's objectives based on existing memory."
+    workflow_preference = workflow
+    if workflow_preference is None and user_settings is not None:
+        workflow_preference = user_settings.settings.last_workflow
     try:
         outcome = task_loop.run_task(
             task=prompt_text,
-            workflow_override=workflow,
+            workflow_override=workflow_preference,
             human_feedback=human_feedback,
         )
     except DRMError as exc:
@@ -105,6 +111,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         config_path = resolve_config_path(args.config) if args.config else None
         config = get_app_config(config_path)
         setup_logging(args.logging_config)
+        user_settings = UserSettingsManager()
         warnings = run_startup_checks(config)
         for warning in warnings:
             logging.getLogger("drm").warning("Startup check: %s", warning)
@@ -118,14 +125,26 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     if args.mode == "gui":
-        gui_result = launch_gui(config)
+        gui_result = launch_gui(config, user_settings=user_settings)
         if gui_result is not None:
             return gui_result
         logging.getLogger("drm").info("Falling back to CLI mode.")
-        run_cli(config, args.task, args.workflow, args.feedback)
+        run_cli(
+            config,
+            args.task,
+            args.workflow,
+            args.feedback,
+            user_settings=user_settings,
+        )
         return 0
 
-    run_cli(config, args.task, args.workflow, args.feedback)
+    run_cli(
+        config,
+        args.task,
+        args.workflow,
+        args.feedback,
+        user_settings=user_settings,
+    )
     return 0
 
 
