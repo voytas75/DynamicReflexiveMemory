@@ -7,6 +7,7 @@ Updates:
     v0.4 - 2025-11-07 - Added semantic graph utilities and relation management APIs.
     v0.5 - 2025-11-07 - Instrumented memory operations with telemetry spans and metrics.
     v0.6 - 2025-11-07 - Added retrieval helpers, tamper-evident revision hashing, and replay utilities.
+    v0.7 - 2025-11-08 - Added resilient Redis reconnection and fallback handling.
 """
 
 from __future__ import annotations
@@ -240,76 +241,85 @@ class RedisMemoryStore:
             self._logger.warning(
                 "Redis python client unavailable; using in-memory fallback store."
             )
-        else:
-            try:
-                self._client = redis_module.Redis(
-                    host=self._host,
-                    port=self._port,
-                    db=self._db,
-                    socket_timeout=2,
-                )
-                # probe the connection lazily
-                self._client.ping()
-            except Exception as exc:  # pragma: no cover - runtime check
-                self._logger.error(
-                    "Redis connection failed (%s); falling back to in-memory store.",
-                    exc,
-                )
-                self._client = None
+            return
+
+        self._initialise_client()
 
     def put(self, item: WorkingMemoryItem) -> None:
         """Store an item in working memory."""
-        try:
-            if self._client:
-                self._client.setex(
+        if self._ensure_client():
+            client = cast(Any, self._client)
+            try:
+                client.setex(
                     name=item.key,
                     time=item.ttl_seconds or self._ttl_seconds,
                     value=json.dumps(asdict(item), default=str),
                 )
-            else:
-                self._fallback[item.key] = item
-        except Exception as exc:  # pragma: no cover - client failure path
-            raise MemoryError(f"Failed to store working memory item: {exc}") from exc
+                return
+            except Exception as exc:  # pragma: no cover - client failure path
+                self._logger.warning(
+                    "Redis store failed (%s); switching to in-memory fallback.", exc
+                )
+                self._client = None
+
+        self._fallback[item.key] = item
 
     def get(self, key: str) -> Optional[WorkingMemoryItem]:
         """Retrieve an item from working memory."""
-        try:
-            if self._client:
-                payload_bytes = self._client.get(key)
+        if self._ensure_client():
+            client = cast(Any, self._client)
+            try:
+                payload_bytes = client.get(key)
                 if payload_bytes is None:
                     return None
                 data = cast(Dict[str, object], json.loads(payload_bytes.decode("utf-8")))
                 key_value = str(data.get("key", ""))
                 payload_value = cast(Dict[str, object], data.get("payload", {}))
                 ttl_value_raw = data.get("ttl_seconds", self._ttl_seconds)
-                ttl_value = int(ttl_value_raw) if isinstance(ttl_value_raw, (int, float)) else self._ttl_seconds
+                ttl_value = (
+                    int(ttl_value_raw)
+                    if isinstance(ttl_value_raw, (int, float))
+                    else self._ttl_seconds
+                )
                 return WorkingMemoryItem(
                     key=key_value,
                     payload=payload_value,
                     ttl_seconds=ttl_value,
                     created_at=self._coerce_timestamp(data.get("created_at")),
                 )
-            return self._fallback.get(key)
-        except Exception as exc:  # pragma: no cover
-            raise MemoryError(f"Failed to load working memory item: {exc}") from exc
+            except Exception as exc:  # pragma: no cover
+                self._logger.warning(
+                    "Redis retrieval failed (%s); falling back to in-memory store.",
+                    exc,
+                )
+                self._client = None
+
+        return self._fallback.get(key)
 
     def delete(self, key: str) -> None:
         """Remove an item from working memory if present."""
-        try:
-            if self._client:
-                self._client.delete(key)
-            else:
-                self._fallback.pop(key, None)
-        except Exception as exc:  # pragma: no cover
-            raise MemoryError(f"Failed to delete working memory item: {exc}") from exc
+        if self._ensure_client():
+            client = cast(Any, self._client)
+            try:
+                client.delete(key)
+                return
+            except Exception as exc:  # pragma: no cover
+                self._logger.warning(
+                    "Redis deletion failed (%s); removing item from fallback store.",
+                    exc,
+                )
+                self._client = None
+
+        self._fallback.pop(key, None)
 
     def list_items(self, pattern: str = "*") -> List[WorkingMemoryItem]:
         """Return working memory items matching the given pattern."""
-        try:
-            if self._client:
+        if self._ensure_client():
+            client = cast(Any, self._client)
+            try:
                 items: List[WorkingMemoryItem] = []
-                for key in self._client.scan_iter(match=pattern):
-                    payload_bytes = self._client.get(key)
+                for key in client.scan_iter(match=pattern):
+                    payload_bytes = client.get(key)
                     if not payload_bytes:
                         continue
                     data = cast(Dict[str, object], json.loads(payload_bytes.decode("utf-8")))
@@ -318,7 +328,11 @@ class RedisMemoryStore:
                     )
                     payload_value = cast(Dict[str, object], data.get("payload", {}))
                     ttl_raw = data.get("ttl_seconds", self._ttl_seconds)
-                    ttl_value = int(ttl_raw) if isinstance(ttl_raw, (int, float)) else self._ttl_seconds
+                    ttl_value = (
+                        int(ttl_raw)
+                        if isinstance(ttl_raw, (int, float))
+                        else self._ttl_seconds
+                    )
                     items.append(
                         WorkingMemoryItem(
                             key=key_value,
@@ -328,9 +342,14 @@ class RedisMemoryStore:
                         )
                     )
                 return items
-            return list(self._fallback.values())
-        except Exception as exc:  # pragma: no cover
-            raise MemoryError(f"Failed to enumerate working memory: {exc}") from exc
+            except Exception as exc:  # pragma: no cover
+                self._logger.warning(
+                    "Redis enumeration failed (%s); returning fallback store state.",
+                    exc,
+                )
+                self._client = None
+
+        return list(self._fallback.values())
 
     @staticmethod
     def _coerce_timestamp(value: Optional[object]) -> datetime:
@@ -344,6 +363,42 @@ class RedisMemoryStore:
                 return datetime.now(timezone.utc)
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc)
+
+    def _initialise_client(self) -> None:
+        """Initialise the Redis client if the dependency is available."""
+        try:
+            self._client = self._attempt_connect()
+        except Exception as exc:  # pragma: no cover - runtime environment dependent
+            self._logger.error(
+                "Redis connection failed during initialisation (%s); using in-memory fallback.",
+                exc,
+            )
+            self._client = None
+
+    def _attempt_connect(self) -> Optional[Any]:
+        if redis_module is None:
+            return None
+        client = redis_module.Redis(
+            host=self._host,
+            port=self._port,
+            db=self._db,
+            socket_timeout=2,
+        )
+        client.ping()
+        return client
+
+    def _ensure_client(self) -> bool:
+        """Ensure a live Redis client is available, reconnecting if needed."""
+        if redis_module is None:
+            return False
+        if self._client is None:
+            try:
+                self._client = self._attempt_connect()
+            except Exception as exc:  # pragma: no cover - runtime dependent
+                self._logger.debug("Redis reconnect attempt failed: %s", exc)
+                self._client = None
+                return False
+        return self._client is not None
 
 
 class ChromaMemoryStore:

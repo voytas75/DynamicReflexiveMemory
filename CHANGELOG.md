@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/) and dates use ISO-8601 (`YYYY-MM-DD`).
 
+## [0.1.6] - 2025-11-08
+
+### Added
+- Docker-backed Redis integration tests validating TTL expiry, service reconnection, and fallback behaviour.
+
+### Changed
+- Hardened Redis working-memory store with automatic reconnection and graceful fallback to in-memory storage when the service is unavailable.
+
 ## [0.1.5] - 2025-11-07
 
 ### Changed
