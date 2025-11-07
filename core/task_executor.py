@@ -10,12 +10,16 @@ Updates:
     v0.6 - 2025-11-07 - Prefixed Ollama models for LiteLLM provider resolution.
     v0.7 - 2025-11-07 - Added explicit Ollama provider hints for LiteLLM routing.
     v0.8 - 2025-11-07 - Emitted detailed error context when workflows fail.
+    v0.9 - 2025-11-07 - Auto-detected Ollama base URL when running under WSL.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import subprocess
 import time
+from functools import lru_cache
 from os import getenv
 from typing import Any, Dict, Mapping, Optional, Tuple, cast
 
@@ -34,8 +38,66 @@ litellm = cast(Any, _litellm)
 LOGGER = logging.getLogger("drm.executor")
 
 
+@lru_cache(maxsize=1)
+def _detect_windows_host_ip(timeout_seconds: float = 2.0) -> Optional[str]:
+    """Detect the Windows host IP when running inside WSL2.
+
+    Returns the first "default via" IP discovered by ``ip route`` if the
+    environment appears to be Windows Subsystem for Linux. The lookup is cached
+    to avoid repeated subprocess execution.
+    """
+
+    try:
+        with open("/proc/version", encoding="utf-8") as version_file:
+            if "microsoft" not in version_file.read().lower():
+                return None
+    except OSError:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["ip", "route"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0 or not result.stdout:
+        return None
+
+    for line in result.stdout.splitlines():
+        tokens = line.strip().split()
+        if not tokens or tokens[0] != "default":
+            continue
+        try:
+            via_index = tokens.index("via")
+        except ValueError:
+            continue
+        if via_index + 1 >= len(tokens):
+            continue
+        candidate = tokens[via_index + 1]
+        if _is_ipv4(candidate):
+            return candidate
+
+    return None
+
+
+def _is_ipv4(value: str) -> bool:
+    """Return ``True`` when *value* is a valid IPv4 address."""
+
+    try:
+        return isinstance(ipaddress.ip_address(value), ipaddress.IPv4Address)
+    except ValueError:
+        return False
+
+
 class TaskExecutor:
     """Executes prompts through configured LLM workflows."""
+
+    DEFAULT_OLLAMA_BASE = "http://localhost:11434"
 
     def __init__(
         self,
@@ -213,7 +275,7 @@ class TaskExecutor:
             }
 
         if provider.lower() == "ollama":
-            base_url = getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+            base_url = self._resolve_ollama_base_url()
             return {
                 "base_url": base_url,
                 "api_base": base_url,
@@ -269,3 +331,22 @@ class TaskExecutor:
             return f"ollama/{model_name}"
 
         return model_name
+
+    def _resolve_ollama_base_url(self) -> str:
+        """Resolve the Ollama base URL with WSL host detection fallback."""
+
+        provided = getenv("OLLAMA_BASE_URL")
+        if provided:
+            base_url = provided.rstrip("/")
+            self._logger.debug("Using OLLAMA_BASE_URL override: %s", base_url)
+            return base_url
+
+        detected_host = _detect_windows_host_ip()
+        if detected_host:
+            base_url = f"http://{detected_host}:11434"
+            self._logger.debug(
+                "Detected Windows host IP %s for Ollama base URL.", detected_host
+            )
+            return base_url
+
+        return self.DEFAULT_OLLAMA_BASE

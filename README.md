@@ -36,7 +36,12 @@ The project targets **Python 3.12**. Create a virtual environment with that inte
 
    - Redis (port 6379) persists working memory.
    - ChromaDB persists via the Python package; no container is required.
-   - Ollama (port 11434) is available for local inference; pull models with `ollama pull <model>` and set `OLLAMA_BASE_URL` when using the `local` workflow.
+   - Ollama (port 11434) is available for local inference; pull models with `ollama pull <model>`. When running DRM inside WSL2, the executor now auto-detects the Windows host IP, but you can still override it with `OLLAMA_BASE_URL` if needed. For manual discovery:
+
+     ```bash
+     export WINHOST=$(ip route | grep -oE 'via [0-9.]+' | head -1 | cut -d' ' -f2)
+     export OLLAMA_BASE_URL="http://$WINHOST:11434"
+     ```
 
 3. **Launch the app**
 

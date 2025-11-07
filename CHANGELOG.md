@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/) and dates use ISO-8601 (`YYYY-MM-DD`).
 
+## [0.1.4] - 2025-11-07
+
+### Added
+- Automatic detection of the Windows host IP for Ollama when running inside WSL2, removing the need for manual configuration in common setups.
+- Regression tests covering Ollama base URL resolution logic.
+
+### Documentation
+- Documented the WSL Ollama workflow and manual override steps in `README.md`.
+
 ## [0.1.2] - 2025-11-07
 
 ### Added
