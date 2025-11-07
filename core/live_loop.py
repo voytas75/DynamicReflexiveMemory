@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from config.settings import AppConfig
 from core.controller import SelfAdjustingController
-from core.exceptions import MemoryError
+from core.exceptions import MemoryError, ReviewError
 from core.memory_manager import MemoryManager
 from core.prompt_engine import AdaptivePromptEngine, PromptContext
 from core.review import ReviewEngine
@@ -123,11 +123,21 @@ class LiveTaskLoop:
             user_task=task,
         )
 
-        review = self._review_engine.perform_review(
-            request=request,
-            result=result,
-            human_feedback=human_feedback,
-        )
+        try:
+            review = self._review_engine.perform_review(
+                request=request,
+                result=result,
+                human_feedback=human_feedback,
+            )
+        except ReviewError as exc:
+            self._logger.error(
+                "Review stage failed for task %s (%s workflow): %s",
+                request.task_id,
+                selection.workflow,
+                exc,
+                exc_info=True,
+            )
+            raise
         self._persist_review(review)
 
         drift_advisory = self._controller.register_result(selection, result, review)

@@ -7,6 +7,7 @@ Updates:
     v0.4 - 2025-11-07 - Honoured LiteLLM debug toggle for automated reviews.
     v0.5 - 2025-11-07 - Normalised metadata serialisation for automated review payloads.
     v0.6 - 2025-11-07 - Applied provider-aware routing for automated review models.
+    v0.7 - 2025-11-07 - Logged automated review failures before surfacing to callers.
 """
 
 from __future__ import annotations
@@ -154,6 +155,12 @@ class ReviewEngine:
                 raw_text="Automated review timed out.",
             )
         except Exception as exc:  # pragma: no cover - runtime failure
+            self._logger.error(
+                "Automated review failed for task %s: %s",
+                request.task_id,
+                exc,
+                exc_info=True,
+            )
             raise ReviewError(f"Automated review failed: {exc}") from exc
 
     @staticmethod
