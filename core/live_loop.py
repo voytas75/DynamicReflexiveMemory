@@ -6,6 +6,7 @@ Updates:
     v0.3 - 2025-11-06 - Persisted semantic summaries and integrated controller-aware
         task selection.
     v0.4 - 2025-11-07 - Linked semantic concepts and surfaced relation context for prompts.
+    v0.5 - 2025-11-07 - Added retrieval-focused context loading and controller mitigation plans.
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ class LiveTaskLoop:
             payload=working_payload,
         )
 
-        layers = self._load_memory_snapshots()
+        layers = self._load_memory_snapshots(task)
         prompt_context = PromptContext(
             task=task,
             workflow=selection.workflow,
@@ -143,13 +144,28 @@ class LiveTaskLoop:
             raise
         self._persist_review(review)
 
-        mitigation_summary: Optional[Dict[str, object]] = None
         drift_advisory = self._controller.register_result(selection, result, review)
+        controller_plan = dict(self._controller.last_plan)
+
+        memory_actions: Optional[Dict[str, object]] = None
         if drift_advisory:
-            mitigation_summary = self._memory_manager.apply_drift_mitigation(task_id=request.task_id)
-            if mitigation_summary:
-                self._persist_mitigation_summary(request.task_id, mitigation_summary)
+            memory_actions = self._memory_manager.apply_drift_mitigation(task_id=request.task_id)
             self._persist_drift_advisory(request.task_id, selection.workflow, drift_advisory)
+        elif controller_plan:
+            self._logger.debug(
+                "Controller produced plan without drift advisory: %s", controller_plan
+            )
+
+        mitigation_summary: Optional[Dict[str, object]] = None
+        if controller_plan:
+            mitigation_summary = dict(controller_plan)
+        if memory_actions:
+            if mitigation_summary is None:
+                mitigation_summary = {}
+            mitigation_summary["memory_actions"] = memory_actions
+
+        if mitigation_summary:
+            self._persist_mitigation_summary(request.task_id, mitigation_summary)
 
         result_payload = cast(
             Dict[str, object],
@@ -322,9 +338,9 @@ class LiveTaskLoop:
         except MemoryError as exc:
             self._logger.error("Failed to persist working memory item %s: %s", key, exc)
 
-    def _load_memory_snapshots(self, limit: int = 5) -> _LayerSnapshot:
-        episodic = self._safe_layer_slice("episodic", limit)
-        semantic = self._safe_layer_slice("semantic", limit)
+    def _load_memory_snapshots(self, task_query: str, limit: int = 5) -> _LayerSnapshot:
+        episodic = self._safe_layer_query("episodic", task_query, limit)
+        semantic = self._safe_layer_query("semantic", task_query, limit)
         reviews = self._load_recent_reviews(limit)
         relations = self._build_semantic_relations(semantic, limit)
         return _LayerSnapshot(
@@ -360,6 +376,19 @@ class LiveTaskLoop:
             if summary:
                 relations[node_id] = summary
         return relations
+
+    def _safe_layer_query(
+        self, layer: str, query: str, limit: int
+    ) -> List[Dict[str, object]]:
+        if query.strip():
+            try:
+                results = self._memory_manager.query_layer(layer, query, limit)
+            except MemoryError as exc:
+                self._logger.warning("Unable to query %s memory: %s", layer, exc)
+                results = []
+            if results:
+                return results
+        return self._safe_layer_slice(layer, limit)
 
     def _safe_layer_slice(self, layer: str, limit: int) -> List[Dict[str, object]]:
         try:

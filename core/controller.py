@@ -7,6 +7,7 @@ Updates:
     v0.3 - 2025-11-06 - Added adaptive workflow bias adjustments derived from drift
         feedback.
     v0.4 - 2025-11-07 - Logged workflow bias snapshots when drift triggers.
+    v0.5 - 2025-11-07 - Added SLO tracking and mitigation planning for drift responses.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 from statistics import mean
-from typing import Deque, Dict, Optional
+from typing import Deque, Dict, List, Optional
 
 from config.settings import AppConfig
 from models.memory import ReviewRecord
@@ -36,7 +37,13 @@ class PerformanceSnapshot:
 class SelfAdjustingController:
     """Monitors execution metrics and recommends adjustments."""
 
-    def __init__(self, config: AppConfig, window_size: int = 10) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        window_size: int = 10,
+        latency_slo_seconds: float = 5.0,
+        quality_slo: float = 0.85,
+    ) -> None:
         self._config = config
         self._logger = LOGGER
         self._window_size = window_size
@@ -44,6 +51,9 @@ class SelfAdjustingController:
         self._last_advisory: Optional[str] = None
         self._workflow_biases: Dict[str, float] = {}
         self._decay = 0.9
+        self._latency_slo = max(0.1, latency_slo_seconds)
+        self._quality_slo = quality_slo
+        self._last_plan: Dict[str, object] = {}
 
     def register_result(
         self,
@@ -65,8 +75,16 @@ class SelfAdjustingController:
             snapshot.latency,
             snapshot.verdict,
         )
+        slo_breaches = self._evaluate_slos(result, review)
         advisory = self._assess_drift()
         self._update_biases(selection, result, review, advisory is not None)
+        self._last_plan = self._build_mitigation_plan(
+            selection,
+            result,
+            review,
+            advisory,
+            slo_breaches,
+        )
         self._last_advisory = advisory
         return advisory
 
@@ -91,6 +109,22 @@ class SelfAdjustingController:
             self._logger.warning(advisory)
             return advisory
         return None
+    def _evaluate_slos(
+        self,
+        result: TaskResult,
+        review: Optional[ReviewRecord],
+    ) -> List[str]:
+        """Return a list of breached service objectives for the current run."""
+        breaches: List[str] = []
+        if result.latency_seconds > self._latency_slo:
+            breaches.append("latency")
+        if (
+            review
+            and review.quality_score is not None
+            and review.quality_score < self._quality_slo
+        ):
+            breaches.append("quality")
+        return breaches
 
     def _update_biases(
         self,
@@ -142,6 +176,58 @@ class SelfAdjustingController:
             target = reasoning_workflow if workflow == fast_workflow else fast_workflow
             if target:
                 self._bump_bias(target, 0.1)
+    def _build_mitigation_plan(
+        self,
+        selection: WorkflowSelection,
+        result: TaskResult,
+        review: Optional[ReviewRecord],
+        advisory: Optional[str],
+        slo_breaches: List[str],
+    ) -> Dict[str, object]:
+        plan: Dict[str, object] = {}
+        if advisory:
+            plan["drift_advisory"] = advisory
+        if slo_breaches:
+            plan["slo_breaches"] = slo_breaches
+
+        recommended: List[str] = []
+        if "latency" in slo_breaches:
+            recommended.extend(
+                [
+                    "reroute_to_reasoning_workflow",
+                    "increase_llm_timeout",
+                ]
+            )
+        if "quality" in slo_breaches:
+            recommended.append("expand_context_retrieval")
+        if advisory:
+            recommended.append("trigger_memory_mitigation")
+        if result.latency_seconds > self._latency_slo * 1.5:
+            recommended.append("reduce_fast_workflow_bias")
+        if (
+            review
+            and review.verdict.lower().startswith(("fail", "reject"))
+            and selection.workflow != self._find_workflow("reasoning")
+        ):
+            recommended.append("escalate_to_reasoning")
+
+        if recommended:
+            deduped = list(dict.fromkeys(recommended))
+            plan["recommended_actions"] = deduped
+
+        if self._history and (plan or slo_breaches or advisory or recommended):
+            latencies = [sample.latency for sample in self._history]
+            negatives = sum(
+                sample.verdict.lower().startswith(("fail", "reject"))
+                for sample in self._history
+            )
+            plan["window_metrics"] = {
+                "latency_avg": round(mean(latencies), 3),
+                "window_size": len(self._history),
+                "negative_reviews": negatives,
+            }
+
+        return plan
 
     def _bump_bias(self, workflow: str, delta: float) -> None:
         current = self._workflow_biases.get(workflow, 0.0)
@@ -167,3 +253,8 @@ class SelfAdjustingController:
     def workflow_biases(self) -> Dict[str, float]:
         """Current controller preference weights per workflow."""
         return dict(self._workflow_biases)
+
+    @property
+    def last_plan(self) -> Dict[str, object]:
+        """Return the last mitigation plan issued by the controller."""
+        return dict(self._last_plan)

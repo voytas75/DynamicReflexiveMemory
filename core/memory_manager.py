@@ -6,18 +6,21 @@ Updates:
     v0.3 - 2025-11-07 - Added revision logging and history export for memory operations.
     v0.4 - 2025-11-07 - Added semantic graph utilities and relation management APIs.
     v0.5 - 2025-11-07 - Instrumented memory operations with telemetry spans and metrics.
+    v0.6 - 2025-11-07 - Added retrieval helpers, tamper-evident revision hashing, and replay utilities.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+from difflib import SequenceMatcher
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, cast
 
 from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import MemoryError
@@ -79,22 +82,31 @@ class MemoryRevisionLogger:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._path = log_path
         self._lock = Lock()
-        self._revision = self._load_last_revision()
+        self._revision, self._tail_hash = self._load_log_tail()
 
     def log(self, layer: str, identifier: str, payload: Dict[str, object]) -> None:
         """Append a revision entry capturing the memory mutation."""
-        record = {
-            "layer": layer,
-            "id": identifier,
-            "payload": payload,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
         with self._lock:
+            record = {
+                "layer": layer,
+                "id": identifier,
+                "payload": payload,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
             self._revision += 1
             record["revision"] = self._revision
+            record["prev_hash"] = self._tail_hash
+            canonical = json.dumps(
+                record,
+                default=str,
+                sort_keys=True,
+            )
+            record_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            record["hash"] = record_hash
             with self._path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, default=str))
                 handle.write("\n")
+            self._tail_hash = record_hash
 
     def history(self, limit: int = 20) -> List[Dict[str, object]]:
         """Return the most recent revision entries up to *limit*."""
@@ -115,6 +127,32 @@ class MemoryRevisionLogger:
                 LOGGER.debug("Skipping malformed revision log entry: %s", line)
         return history
 
+    def verify(self, limit_revision: Optional[int] = None) -> bool:
+        """Return True when the revision log hashes and chain are valid."""
+        expected_prev: Optional[str] = None
+        for record in self._iter_records(limit_revision):
+            if record.get("prev_hash") != expected_prev:
+                return False
+            computed = self._calculate_hash(record)
+            if computed != record.get("hash"):
+                return False
+            expected_prev = record.get("hash")
+        return True
+
+    def replay_layer(
+        self, layer: str, limit_revision: Optional[int] = None
+    ) -> List[Dict[str, object]]:
+        """Reconstruct the layer state up to *limit_revision* by replaying the log."""
+        state: Dict[str, Dict[str, object]] = {}
+        for record in self._iter_records(limit_revision):
+            if record.get("layer") != layer:
+                continue
+            identifier = str(record.get("id"))
+            payload_raw = record.get("payload")
+            if isinstance(payload_raw, dict):
+                state[identifier] = payload_raw
+        return list(state.values())
+
     def _resolve_log_path(self, override: Optional[Path]) -> Path:
         if override is not None:
             return override
@@ -126,10 +164,11 @@ class MemoryRevisionLogger:
             return candidate / DEFAULT_REVISION_LOG.name
         return DEFAULT_REVISION_LOG
 
-    def _load_last_revision(self) -> int:
+    def _load_log_tail(self) -> Tuple[int, Optional[str]]:
         if not self._path.exists():
-            return 0
+            return 0, None
         last_revision = 0
+        tail_hash: Optional[str] = None
         try:
             with self._path.open("r", encoding="utf-8") as handle:
                 for line in handle:
@@ -140,9 +179,47 @@ class MemoryRevisionLogger:
                     revision_raw = record.get("revision")
                     if isinstance(revision_raw, int) and revision_raw > last_revision:
                         last_revision = revision_raw
+                        tail_hash = record.get("hash")
         except OSError as exc:
             LOGGER.warning("Unable to read revision log %s: %s", self._path, exc)
-        return last_revision
+        return last_revision, tail_hash
+
+    def _iter_records(
+        self, limit_revision: Optional[int] = None
+    ) -> Iterator[Dict[str, object]]:
+        if not self._path.exists():
+            return iter(())
+
+        def _iterator() -> Iterator[Dict[str, object]]:
+            try:
+                with self._path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            record = cast(Dict[str, object], json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+                        revision_raw = record.get("revision")
+                        if isinstance(limit_revision, int) and isinstance(
+                            revision_raw, int
+                        ):
+                            if revision_raw > limit_revision:
+                                break
+                        yield record
+            except OSError as exc:
+                LOGGER.warning("Unable to iterate revision log %s: %s", self._path, exc)
+
+        return _iterator()
+
+    @staticmethod
+    def _calculate_hash(record: Dict[str, object]) -> str:
+        """Recompute the record hash (ignoring any stored hash value)."""
+        payload = dict(record)
+        payload.pop("hash", None)
+        canonical = json.dumps(payload, default=str, sort_keys=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class RedisMemoryStore:
@@ -517,6 +594,82 @@ class ChromaMemoryStore:
         except Exception as exc:
             raise MemoryError(f"Failed to query {layer} memory: {exc}") from exc
 
+    def query_layer(self, layer: str, query: str, limit: int) -> List[Dict[str, object]]:
+        """Return layer entries relevant to *query*, preferring semantic search."""
+        limit = max(1, limit)
+        normalized_query = query.strip()
+        if not normalized_query:
+            items = self.list_layer(layer)
+            return items[-limit:] if limit < len(items) else items
+
+        if self._collection is not None:
+            try:  # pragma: no cover - depends on chromadb
+                response = self._collection.query(
+                    query_texts=[normalized_query],
+                    where={"layer": layer},
+                    n_results=limit,
+                    include=["documents", "distances"],
+                )
+                documents = (response.get("documents") or [[]])[0]
+                distances = (response.get("distances") or [[]])[0]
+                ranked: List[Dict[str, object]] = []
+                for index, document in enumerate(documents):
+                    payload = (
+                        cast(Dict[str, object], json.loads(document))
+                        if isinstance(document, str)
+                        else cast(Dict[str, object], document)
+                    )
+                    if not isinstance(payload, dict):
+                        continue
+                    score = 0.0
+                    if isinstance(distances, list) and index < len(distances):
+                        try:
+                            distance = float(distances[index])
+                            score = 1.0 / (1.0 + distance)
+                        except (TypeError, ValueError):
+                            score = 0.0
+                    enriched = dict(payload)
+                    enriched["_score"] = round(score, 6)
+                    ranked.append(enriched)
+                if ranked:
+                    ranked.sort(key=lambda item: item.get("_score", 0.0), reverse=True)
+                    return ranked[:limit]
+            except Exception as exc:
+                self._logger.warning(
+                    "Chroma query failed (%s); falling back to local scoring.",
+                    exc,
+                )
+
+        return self._fallback_search(layer, normalized_query, limit)
+
+    def _fallback_search(
+        self,
+        layer: str,
+        query: str,
+        limit: int,
+    ) -> List[Dict[str, object]]:
+        storage = self._fallback.get(layer, {})
+        if not storage:
+            return []
+
+        query_lower = query.lower()
+        scored: List[Tuple[float, Dict[str, object]]] = []
+        for payload in storage.values():
+            text = json.dumps(payload, default=str).lower()
+            if not text:
+                continue
+            similarity = SequenceMatcher(None, query_lower, text[:2048]).ratio()
+            if query_lower in text:
+                similarity += 0.5
+            if similarity <= 0.05:
+                continue
+            candidate = dict(payload)
+            candidate["_score"] = round(similarity, 6)
+            scored.append((candidate["_score"], candidate))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [item[1] for item in scored[:limit]]
+
 
 class MemoryManager:
     """Coordinates memory interactions across layers."""
@@ -683,6 +836,12 @@ class MemoryManager:
             raise MemoryError(f"Unsupported memory layer requested: {layer}")
         return self._chroma_store.list_layer(layer)
 
+    def query_layer(self, layer: str, query: str, limit: int = 5) -> List[Dict[str, object]]:
+        """Search stored items for the requested layer."""
+        if layer not in {"episodic", "semantic", "review"}:
+            raise MemoryError(f"Unsupported memory layer requested: {layer}")
+        return self._chroma_store.query_layer(layer, query, limit)
+
     def list_working_items(self, pattern: str = "*") -> List[WorkingMemoryItem]:
         """List working memory records for UI inspection."""
         return self._redis_store.list_items(pattern)
@@ -690,6 +849,18 @@ class MemoryManager:
     def get_revision_history(self, limit: int = 20) -> List[Dict[str, object]]:
         """Return the latest revision entries for audit or rollback tooling."""
         return self._revision_logger.history(limit)
+
+    def verify_revision_log(self, limit_revision: Optional[int] = None) -> bool:
+        """Validate stored revision hash chain integrity."""
+        return self._revision_logger.verify(limit_revision)
+
+    def replay_revision_state(
+        self, layer: str, limit_revision: Optional[int] = None
+    ) -> List[Dict[str, object]]:
+        """Reconstruct the best-known state for *layer* up to *limit_revision*."""
+        if layer not in {"episodic", "semantic", "review", "working"}:
+            raise MemoryError(f"Unsupported revision replay layer: {layer}")
+        return self._revision_logger.replay_layer(layer, limit_revision)
 
     def truncate_working_memory(self, max_items: int) -> int:
         """Trim working memory to at most *max_items* entries, oldest first."""
