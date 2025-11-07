@@ -34,6 +34,7 @@ from models.memory import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CHROMA_CACHE = PROJECT_ROOT / "data" / "chromadb" / "cache"
+os.environ.setdefault("CHROMA_TELEMETRY", "FALSE")
 try:
     DEFAULT_CHROMA_CACHE.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("CHROMA_CACHE_DIR", str(DEFAULT_CHROMA_CACHE))
@@ -362,6 +363,7 @@ class ChromaMemoryStore:
             "review": {},
         }
         self._embedding_fn: Optional[Any] = None
+        self._supports_vector_query = False
 
         if chromadb_module is None:
             self._logger.warning(
@@ -382,6 +384,7 @@ class ChromaMemoryStore:
             return
 
         self._embedding_fn = self._build_embedding_function(config)
+        self._supports_vector_query = self._embedding_fn is not None
 
         try:  # pragma: no cover - needs chromadb runtime
             self._client = chromadb_module.PersistentClient(
@@ -602,7 +605,7 @@ class ChromaMemoryStore:
             items = self.list_layer(layer)
             return items[-limit:] if limit < len(items) else items
 
-        if self._collection is not None:
+        if self._collection is not None and self._supports_vector_query:
             try:  # pragma: no cover - depends on chromadb
                 response = self._collection.query(
                     query_texts=[normalized_query],
