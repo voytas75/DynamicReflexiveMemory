@@ -8,6 +8,7 @@ Updates:
     v0.4 - 2025-11-07 - Linked semantic concepts and surfaced relation context for prompts.
     v0.5 - 2025-11-07 - Added retrieval-focused context loading and controller mitigation plans.
     v0.6 - 2025-11-07 - Recorded workflow preference in persistent user settings.
+    v0.7 - 2025-11-08 - Persisted drift analytics for longitudinal trend analysis.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Mapping, Optional, cast
+from typing import Dict, List, Mapping, Optional, Sequence, cast
 from uuid import uuid4
 
 from config.settings import AppConfig
@@ -27,6 +28,7 @@ from core.review import ReviewEngine
 from core.task_executor import TaskExecutor
 from core.user_settings import UserSettingsManager
 from models.memory import (
+    DriftAnalyticsRecord,
     EpisodicMemoryEntry,
     ReviewRecord,
     SemanticNode,
@@ -167,6 +169,15 @@ class LiveTaskLoop:
             if mitigation_summary is None:
                 mitigation_summary = {}
             mitigation_summary["memory_actions"] = memory_actions
+
+        self._persist_drift_analytics(
+            task_id=request.task_id,
+            selection=selection,
+            result=result,
+            review=review,
+            advisory=drift_advisory,
+            mitigation=mitigation_summary or controller_plan,
+        )
 
         if mitigation_summary:
             self._persist_mitigation_summary(request.task_id, mitigation_summary)
@@ -333,6 +344,46 @@ class LiveTaskLoop:
             key=f"task:{task_id}:mitigation",
             payload=payload,
         )
+
+    def _persist_drift_analytics(
+        self,
+        *,
+        task_id: str,
+        selection: WorkflowSelection,
+        result: TaskResult,
+        review: Optional[ReviewRecord],
+        advisory: Optional[str],
+        mitigation: Optional[Dict[str, object]],
+    ) -> None:
+        slo_raw: Optional[object] = None
+        if mitigation and "slo_breaches" in mitigation:
+            slo_raw = mitigation.get("slo_breaches")
+        slo_breaches: List[str]
+        if isinstance(slo_raw, (list, tuple, set)):
+            slo_breaches = [str(item) for item in cast(Sequence[object], slo_raw)]
+        elif slo_raw:
+            slo_breaches = [str(slo_raw)]
+        else:
+            slo_breaches = []
+
+        record = DriftAnalyticsRecord(
+            id=f"analytics:{task_id}:{uuid4().hex}",
+            task_reference=task_id,
+            workflow=selection.workflow,
+            latency_seconds=result.latency_seconds,
+            verdict=review.verdict if review else "unknown",
+            slo_breaches=tuple(slo_breaches),
+            drift_advisory=advisory,
+            workflow_biases=self._controller.workflow_biases,
+            mitigation_plan=dict(mitigation or {}),
+        )
+
+        try:
+            self._memory_manager.record_drift_analytics(record)
+        except MemoryError as exc:
+            self._logger.error(
+                "Failed to persist drift analytics %s: %s", record.id, exc
+            )
 
     def _store_working_item(self, key: str, payload: Dict[str, object]) -> None:
         item = WorkingMemoryItem(

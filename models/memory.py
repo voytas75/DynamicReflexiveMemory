@@ -5,13 +5,14 @@ Updates:
     v0.2 - 2025-11-07 - Added structured review fields for automated audit parsing.
     v0.3 - 2025-11-07 - Switched to timezone-aware timestamps across memory records.
     v0.4 - 2025-11-07 - Documented semantic relations to support graph operations.
+    v0.5 - 2025-11-08 - Added drift analytics record type for controller trend persistence.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 
 def _utcnow() -> datetime:
@@ -62,4 +63,20 @@ class ReviewRecord:
     quality_score: Optional[float] = None
     suggestions: List[str] = field(default_factory=list)
     auto_verdict: Optional[str] = None
+    created_at: datetime = field(default_factory=_utcnow)
+
+
+@dataclass(slots=True)
+class DriftAnalyticsRecord:
+    """Summary of controller performance metrics for drift analysis."""
+
+    id: str
+    task_reference: str
+    workflow: str
+    latency_seconds: float
+    verdict: str
+    slo_breaches: Sequence[str]
+    drift_advisory: Optional[str]
+    workflow_biases: Dict[str, float]
+    mitigation_plan: Dict[str, object]
     created_at: datetime = field(default_factory=_utcnow)

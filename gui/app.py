@@ -11,6 +11,7 @@ Updates:
     v0.8 - 2025-11-07 - Restored user preferences for workflow selection and window geometry.
     v0.9 - 2025-11-07 - Added settings dialog for editing configuration values.
     v0.10 - 2025-11-08 - Wired telemetry-driven metrics, drift advisories, and review panes.
+    v0.11 - 2025-11-08 - Visualised drift analytics trends with persistent telemetry data.
 """
 
 from __future__ import annotations
@@ -317,6 +318,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._recent_outcomes: List[TaskRunOutcome] = []
         self._latest_metrics: Dict[str, object] = {}
         self._drift_events: Deque[TelemetryEvent] = deque(maxlen=15)
+        self._drift_analytics: Deque[Dict[str, object]] = deque(maxlen=30)
         self._review_history_buffer: List[Dict[str, object]] = []
         self._user_settings = user_settings
         self._config_path = config_path or Path("config/config.json")
@@ -393,6 +395,11 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._drift_history_view.setReadOnly(True)
         self._drift_history_view.setPlaceholderText("No drift advisories yet.")
         self._telemetry_tab.addTab(self._drift_history_view, "Drift Advisories")
+
+        self._drift_trend_view = QTextEdit()
+        self._drift_trend_view.setReadOnly(True)
+        self._drift_trend_view.setPlaceholderText("No drift analytics yet.")
+        self._telemetry_tab.addTab(self._drift_trend_view, "Drift Trends")
 
         layout.addWidget(self._telemetry_tab)
 
@@ -539,6 +546,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             episodic = self._memory_manager.list_layer("episodic")
             semantic = self._memory_manager.list_layer("semantic")
             reviews = self._memory_manager.list_layer("review")
+            analytics_records = self._memory_manager.list_drift_analytics(limit=15)
             revisions = self._memory_manager.get_revision_history(limit=5)
         except MemoryError as exc:
             LOGGER.error("Failed to load memory snapshot: %s", exc)
@@ -553,6 +561,22 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._replace_review_records(reviews)
         self._update_review_history_view()
 
+        self._drift_analytics.clear()
+        for record in analytics_records:
+            payload = {
+                "id": record.id,
+                "task_reference": record.task_reference,
+                "workflow": record.workflow,
+                "latency_seconds": record.latency_seconds,
+                "verdict": record.verdict,
+                "slo_breaches": list(record.slo_breaches),
+                "drift_advisory": record.drift_advisory,
+                "workflow_biases": record.workflow_biases,
+                "mitigation_plan": record.mitigation_plan,
+                "created_at": record.created_at,
+            }
+            self._drift_analytics.append(self._normalise_analytics_payload(payload))
+
         lines = [
             "=== Working Memory ===",
             *(self._format_working_item(item) for item in working_items[:5]),
@@ -564,6 +588,11 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             *(self._format_generic_item(item) for item in reviews[:5]),
             "=== Drift Advisories ===",
             *(self._format_working_item(item) for item in drift_items[:5]),
+            "=== Drift Analytics ===",
+            *(
+                self._format_analytics_line(record)
+                for record in list(self._drift_analytics)[-5:]
+            ),
             "=== Revision Log ===",
             *(self._format_revision_entry(entry) for entry in revisions),
         ]
@@ -583,6 +612,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             self._render_memory_metrics()
 
         self._render_drift_history()
+        self._render_drift_trends()
 
     @staticmethod
     def _format_working_item(item: WorkingMemoryItem) -> str:
@@ -718,6 +748,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         metrics_updated = False
         drift_updated = False
         review_updated = False
+        analytics_updated = False
 
         for event in events:
             if event.name == "memory.metrics":
@@ -744,6 +775,15 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
                     self._bias_label.setText(
                         self._format_bias_summary(cast(Mapping[str, float], biases))
                     )
+            elif event.name == "controller.analytics.persisted":
+                analytics_payload = event.payload.get("analytics")
+                if isinstance(analytics_payload, Mapping):
+                    self._drift_analytics.append(
+                        self._normalise_analytics_payload(
+                            cast(Mapping[str, object], analytics_payload)
+                        )
+                    )
+                    analytics_updated = True
             elif event.name == "review.recorded":
                 review_payload = event.payload.get("review")
                 if isinstance(review_payload, dict):
@@ -757,6 +797,8 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             self._update_drift_label_from_events()
         if review_updated:
             self._update_review_history_view()
+        if analytics_updated:
+            self._render_drift_trends()
 
     def _render_memory_metrics(self) -> None:
         """Render the latest memory metrics snapshot."""
@@ -771,6 +813,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         semantic = metrics.get("semantic_records", "n/a")
         review = metrics.get("review_records", "n/a")
         drift = metrics.get("drift_advisories", "n/a")
+        analytics = metrics.get("analytics_records", "n/a")
         lines = [
             f"Captured: {captured}",
             f"Working items: {working}",
@@ -778,6 +821,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             f"Semantic nodes: {semantic}",
             f"Review records: {review}",
             f"Drift advisories in working memory: {drift}",
+            f"Drift analytics records: {analytics}",
         ]
         self._metrics_view.setPlainText("\n".join(lines))
 
@@ -801,6 +845,160 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
                 f"{timestamp} | workflow={workflow} | slo={slo_text}\n{advisory}"
             )
         self._drift_history_view.setPlainText("\n\n".join(lines))
+
+    def _render_drift_trends(self) -> None:
+        """Render controller drift analytics trends."""
+        if not self._drift_analytics:
+            self._drift_trend_view.setPlainText("No drift analytics yet.")
+            return
+
+        records = list(self._drift_analytics)
+        latencies: List[float] = []
+        for record in records:
+            value = record.get("latency_seconds")
+            try:
+                latencies.append(float(value))
+            except (TypeError, ValueError):
+                continue
+
+        average_latency: Optional[float] = None
+        if latencies:
+            average_latency = sum(latencies) / len(latencies)
+
+        drift_hits = sum(1 for record in records if record.get("drift_advisory"))
+        slo_total = 0
+        for record in records:
+            slo_value = record.get("slo_breaches")
+            if isinstance(slo_value, (list, tuple, set)):
+                slo_total += len(slo_value)
+
+        summary_lines = [
+            f"Records tracked: {len(records)}",
+            (
+                f"Average latency: {average_latency:.2f}s"
+                if average_latency is not None
+                else "Average latency: n/a"
+            ),
+            f"Runs with drift advisories: {drift_hits}",
+            f"Cumulative SLO breaches: {slo_total}",
+        ]
+
+        latest_biases = records[-1].get("workflow_biases")
+        if isinstance(latest_biases, Mapping) and latest_biases:
+            bias_segments: List[str] = []
+            for name, value in sorted(latest_biases.items()):
+                try:
+                    bias_segments.append(f"{name}:{float(value):+.2f}")
+                except (TypeError, ValueError):
+                    continue
+            if bias_segments:
+                summary_lines.append("Latest bias snapshot: " + ", ".join(bias_segments))
+
+        summary_lines.append("")
+        summary_lines.append("Recent records:")
+        for record in reversed(records[-5:]):
+            summary_lines.append(self._format_analytics_line(record))
+            advisory = record.get("drift_advisory")
+            if advisory:
+                summary_lines.append(f"  advisory: {advisory}")
+            mitigation = record.get("mitigation_plan")
+            if isinstance(mitigation, Mapping) and mitigation:
+                summary_lines.append(
+                    "  mitigation: "
+                    + self._summarise_actions(cast(Mapping[str, object], mitigation))
+                )
+
+        self._drift_trend_view.setPlainText("\n".join(summary_lines))
+
+    @staticmethod
+    def _format_analytics_line(record: Mapping[str, object]) -> str:
+        created_at = record.get("created_at", "unknown")
+        workflow = record.get("workflow", "unknown")
+        latency_raw = record.get("latency_seconds")
+        latency_text: str
+        if isinstance(latency_raw, (int, float)):
+            latency_text = f"{float(latency_raw):.2f}s"
+        elif isinstance(latency_raw, str):
+            try:
+                latency_text = f"{float(latency_raw):.2f}s"
+            except ValueError:
+                latency_text = latency_raw
+        else:
+            latency_text = "n/a"
+
+        verdict = record.get("verdict")
+        verdict_text = str(verdict) if verdict is not None else "n/a"
+        drift_flag = "yes" if record.get("drift_advisory") else "no"
+        slo_value = record.get("slo_breaches")
+        if isinstance(slo_value, (list, tuple, set)) and slo_value:
+            slo_text = ", ".join(str(item) for item in slo_value)
+        else:
+            slo_text = "none"
+
+        return (
+            f"{created_at} | workflow={workflow} | latency={latency_text} | "
+            f"verdict={verdict_text} | drift={drift_flag} | slo={slo_text}"
+        )
+
+    def _normalise_analytics_payload(
+        self, payload: Mapping[str, object]
+    ) -> Dict[str, object]:
+        created_raw = payload.get("created_at")
+        if isinstance(created_raw, datetime):
+            created_at = created_raw.isoformat()
+        elif isinstance(created_raw, str):
+            created_at = created_raw
+        else:
+            created_at = datetime.now(timezone.utc).isoformat()
+
+        slo_raw = payload.get("slo_breaches")
+        if isinstance(slo_raw, (list, tuple, set)):
+            slo_breaches = [str(item) for item in slo_raw]
+        elif slo_raw:
+            slo_breaches = [str(slo_raw)]
+        else:
+            slo_breaches = []
+
+        biases_raw = payload.get("workflow_biases")
+        workflow_biases: Dict[str, float] = {}
+        if isinstance(biases_raw, Mapping):
+            for name, value in biases_raw.items():
+                try:
+                    workflow_biases[str(name)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
+        mitigation_raw = payload.get("mitigation_plan")
+        if isinstance(mitigation_raw, Mapping):
+            mitigation_plan = dict(mitigation_raw)
+        elif mitigation_raw:
+            mitigation_plan = {"value": mitigation_raw}
+        else:
+            mitigation_plan = {}
+
+        latency_raw = payload.get("latency_seconds")
+        try:
+            latency = float(latency_raw)
+        except (TypeError, ValueError):
+            latency = None
+
+        advisory_raw = payload.get("drift_advisory")
+        drift_advisory = None
+        if advisory_raw not in (None, "", "None"):
+            drift_advisory = str(advisory_raw)
+
+        return {
+            "id": str(payload.get("id") or "unknown"),
+            "task_reference": str(payload.get("task_reference") or "unknown"),
+            "workflow": str(payload.get("workflow") or "unknown"),
+            "latency_seconds": latency,
+            "verdict": str(payload.get("verdict") or "unknown"),
+            "slo_breaches": slo_breaches,
+            "drift_advisory": drift_advisory,
+            "workflow_biases": workflow_biases,
+            "mitigation_plan": mitigation_plan,
+            "created_at": created_at,
+        }
 
     def _update_drift_label_from_events(self) -> None:
         """Show latest drift advisory in the headline label."""

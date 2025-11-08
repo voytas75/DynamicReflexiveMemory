@@ -9,6 +9,7 @@ Updates:
     v0.6 - 2025-11-07 - Added retrieval helpers, tamper-evident revision hashing, and replay utilities.
     v0.7 - 2025-11-08 - Added resilient Redis reconnection and fallback handling.
     v0.8 - 2025-11-08 - Published telemetry metrics snapshots for GUI monitoring.
+    v0.9 - 2025-11-08 - Added drift analytics layer and metrics reporting hooks.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import MemoryError
 from core.telemetry import emit_metric, log_span, publish_event
 from models.memory import (
+    DriftAnalyticsRecord,
     EpisodicMemoryEntry,
     ReviewRecord,
     SemanticNode,
@@ -417,6 +419,7 @@ class ChromaMemoryStore:
             "episodic": {},
             "semantic": {},
             "review": {},
+            "analytics": {},
         }
         self._embedding_fn: Optional[Any] = None
         self._supports_vector_query = False
@@ -614,6 +617,10 @@ class ChromaMemoryStore:
         """Persist a review record entry."""
         self._store_in_collection("review", record.id, asdict(record))
 
+    def add_drift_analytics(self, record: DriftAnalyticsRecord) -> None:
+        """Persist controller drift analytics for trend analysis."""
+        self._store_in_collection("analytics", record.id, asdict(record))
+
     def get_semantic(self, node_id: str) -> Optional[Dict[str, object]]:
         """Return a semantic node payload by identifier if available."""
         if self._collection is None:
@@ -790,6 +797,17 @@ class MemoryManager:
         publish_event("review.recorded", review=record_dict)
         self._publish_metrics_snapshot()
 
+    def record_drift_analytics(self, record: DriftAnalyticsRecord) -> None:
+        """Persist controller drift analytics for longitudinal queries."""
+        self._logger.debug("Recording drift analytics %s", record.id)
+        record_dict = asdict(record)
+        with log_span("memory.record_drift_analytics", id=record.id):
+            self._chroma_store.add_drift_analytics(record)
+            self._revision_logger.log("analytics", record.id, record_dict)
+        emit_metric("memory.write", layer="analytics")
+        publish_event("controller.analytics.persisted", analytics=record_dict)
+        self._publish_metrics_snapshot()
+
     def get_semantic_node(self, node_id: str) -> Optional[SemanticNode]:
         """Return a semantic node by id, or None when unavailable."""
         payload = self._chroma_store.get_semantic(node_id)
@@ -811,6 +829,19 @@ class MemoryManager:
                 return []
             return nodes[-limit:]
         return nodes
+
+    def list_drift_analytics(self, limit: int = 50) -> List[DriftAnalyticsRecord]:
+        """Return recent drift analytics records ordered by timestamp."""
+        payloads = self._chroma_store.list_layer("analytics")
+        records: List[DriftAnalyticsRecord] = []
+        for payload in payloads:
+            record = self._hydrate_drift_analytics(payload)
+            if record is not None:
+                records.append(record)
+        records.sort(key=lambda item: item.created_at)
+        if limit <= 0:
+            return []
+        return records[-limit:]
 
     def link_semantic_nodes(self, source_id: str, target_id: str, weight: float = 0.5) -> None:
         """Create or update a bidirectional relation between semantic nodes."""
@@ -901,13 +932,13 @@ class MemoryManager:
 
     def list_layer(self, layer: str) -> List[Dict[str, object]]:
         """List stored items for the requested layer."""
-        if layer not in {"episodic", "semantic", "review"}:
+        if layer not in {"episodic", "semantic", "review", "analytics"}:
             raise MemoryError(f"Unsupported memory layer requested: {layer}")
         return self._chroma_store.list_layer(layer)
 
     def query_layer(self, layer: str, query: str, limit: int = 5) -> List[Dict[str, object]]:
         """Search stored items for the requested layer."""
-        if layer not in {"episodic", "semantic", "review"}:
+        if layer not in {"episodic", "semantic", "review", "analytics"}:
             raise MemoryError(f"Unsupported memory layer requested: {layer}")
         return self._chroma_store.query_layer(layer, query, limit)
 
@@ -927,7 +958,7 @@ class MemoryManager:
         self, layer: str, limit_revision: Optional[int] = None
     ) -> List[Dict[str, object]]:
         """Reconstruct the best-known state for *layer* up to *limit_revision*."""
-        if layer not in {"episodic", "semantic", "review", "working"}:
+        if layer not in {"episodic", "semantic", "review", "analytics", "working"}:
             raise MemoryError(f"Unsupported revision replay layer: {layer}")
         return self._revision_logger.replay_layer(layer, limit_revision)
 
@@ -1082,7 +1113,7 @@ class MemoryManager:
         except Exception as exc:  # pragma: no cover - defensive path
             self._logger.debug("Unable to enumerate working memory for metrics: %s", exc)
 
-        for layer in ("episodic", "semantic", "review"):
+        for layer in ("episodic", "semantic", "review", "analytics"):
             key = f"{layer}_records"
             try:
                 metrics[key] = len(self.list_layer(layer))
@@ -1136,4 +1167,67 @@ class MemoryManager:
             sources=sources,
             timestamp=timestamp,
             relations=relations,
+        )
+
+    def _hydrate_drift_analytics(
+        self, payload: Dict[str, object]
+    ) -> Optional[DriftAnalyticsRecord]:
+        try:
+            record_id = str(payload["id"])
+        except KeyError:
+            self._logger.debug("Analytics payload missing identifier: %s", payload)
+            return None
+
+        task_reference = str(payload.get("task_reference") or "unknown")
+        workflow = str(payload.get("workflow") or "unknown")
+
+        latency_raw = payload.get("latency_seconds", 0.0)
+        try:
+            latency = float(latency_raw)
+        except (TypeError, ValueError):
+            latency = 0.0
+
+        verdict = str(payload.get("verdict") or "unknown")
+
+        slo_raw = payload.get("slo_breaches", [])
+        if isinstance(slo_raw, (list, tuple, set)):
+            slo_breaches = tuple(str(item) for item in slo_raw)
+        elif slo_raw:
+            slo_breaches = (str(slo_raw),)
+        else:
+            slo_breaches = ()
+
+        advisory_raw = payload.get("drift_advisory")
+        drift_advisory = None if advisory_raw is None else str(advisory_raw)
+
+        biases_raw = payload.get("workflow_biases", {})
+        workflow_biases: Dict[str, float] = {}
+        if isinstance(biases_raw, dict):
+            for key, value in biases_raw.items():
+                try:
+                    workflow_biases[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
+        mitigation_raw = payload.get("mitigation_plan", {})
+        if isinstance(mitigation_raw, dict):
+            mitigation_plan = dict(mitigation_raw)
+        elif mitigation_raw is None:
+            mitigation_plan = {}
+        else:
+            mitigation_plan = {"value": mitigation_raw}
+
+        created_at = RedisMemoryStore._coerce_timestamp(payload.get("created_at"))
+
+        return DriftAnalyticsRecord(
+            id=record_id,
+            task_reference=task_reference,
+            workflow=workflow,
+            latency_seconds=latency,
+            verdict=verdict,
+            slo_breaches=slo_breaches,
+            drift_advisory=drift_advisory,
+            workflow_biases=workflow_biases,
+            mitigation_plan=mitigation_plan,
+            created_at=created_at,
         )

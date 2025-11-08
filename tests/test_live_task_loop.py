@@ -80,10 +80,16 @@ def test_live_task_loop_persists_memory(monkeypatch, tmp_path) -> None:
     episodic = memory_manager.list_layer("episodic")
     semantic = memory_manager.list_layer("semantic")
     reviews = memory_manager.list_layer("review")
+    analytics = memory_manager.list_layer("analytics")
 
-    assert episodic and semantic and reviews
+    assert episodic and semantic and reviews and analytics
+    assert any(item.get("workflow") == "fast" for item in analytics)
+
+    analytics_records = memory_manager.list_drift_analytics()
+    assert analytics_records
+    assert analytics_records[-1].workflow == "fast"
 
     history = memory_manager.get_revision_history(limit=10)
     assert history
     layers = {entry.get("layer") for entry in history}
-    assert "episodic" in layers and "review" in layers
+    assert {"episodic", "review", "analytics"}.issubset(layers)

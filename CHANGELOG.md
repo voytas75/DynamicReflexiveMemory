@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/) and dates use ISO-8601 (`YYYY-MM-DD`).
 
+## [0.1.8] - 2025-11-08
+
+### Added
+- Controller drift analytics are now persisted to the Chroma analytics layer and the JSONL revision log for retrospective queries.
+- PySide6 GUI gains a Drift Trends tab visualising latency averages, advisory counts, and latest workflow bias snapshots.
+
+### Changed
+- Memory metrics snapshots now include analytics record counts to feed telemetry consumers.
+
+### Documentation
+- Updated `README.md` and `drmblueprint.md` to describe the drift analytics pipeline and trend visualisation.
+
 ## [0.1.7] - 2025-11-08
 
 ### Added

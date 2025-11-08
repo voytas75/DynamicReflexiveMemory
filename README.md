@@ -11,6 +11,7 @@ to deliver continuity between reasoning sessions.
 - Unified memory manager with Redis working memory and ChromaDB episodic/
   semantic stores.
 - Hybrid automated/human review loop feeding self-adjustment heuristics.
+- Persisted controller drift analytics with Chroma-backed recall and GUI trend visualisations.
 - Strictly typed configuration and models via Pydantic and dataclasses.
 - Append-only memory revision log for audit trails and rollback instrumentation.
 - Remembers the most recent workflow preference and GUI window size between sessions.
@@ -99,6 +100,16 @@ the orchestration path or `pytest -k revisions` to inspect the logging tests.
   memory whenever the controller detects performance issues, keeping the active
   context focused.
 
+## Drift Analytics
+
+- Each controller run emits a drift analytics record capturing latency, verdicts,
+  SLO breaches, and the mitigation plan. Records are persisted both to the
+  Chroma analytics layer and the JSONL revision log for offline analysis.
+- The GUI telemetry tab now includes a **Drift Trends** view summarising moving
+  averages, advisory counts, and the latest workflow bias snapshot.
+- Programmatic access is available via `MemoryManager.list_drift_analytics()` to
+  feed external dashboards or retrospective audits.
+
 ## Observability
 
 - Memory operations emit metrics via the `drm.metrics` logger and structured
@@ -140,4 +151,4 @@ The PySide6 dashboard displays:
 
 1. Implement Redis integration tests with docker-compose fixtures.
 2. Expose the telemetry feed via WebSocket for external observers and dashboards.
-3. Add persistence and analytics for drift detection outcomes.
+3. Expose drift analytics exports via CLI tooling and webhook adapters.
