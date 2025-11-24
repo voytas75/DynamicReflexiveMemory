@@ -1,154 +1,42 @@
-# Dynamic Reflexive Memory Core
+# Dynamic Reflexive Memory
 
-Dynamic Reflexive Memory (DRM) evolves into an adaptive memory substrate for LLM workflows. The system blends short-
-term Redis state, long-term ChromaDB embeddings, and reflective review cycles
-to deliver continuity between reasoning sessions.
+Dynamic Reflexive Memory (DRM) is an adaptive memory substrate for LLM workflows that unifies short-term Redis state, long-term ChromaDB embeddings, and reflective review cycles to maintain continuity between reasoning sessions.
+
+## Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+docker compose up -d
+```
+
+## Quick Start
+
+```bash
+# Set environment variables
+export AZURE_OPENAI_API_KEY="your-key"
+export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com"
+export AZURE_OPENAI_EMBEDDING_DEPLOYMENT="text-embedding-3-large"
+export OLLAMA_BASE_URL="http://localhost:11434"
+
+# Launch DRM (GUI or CLI)
+python main.py --mode gui
+python main.py --mode cli --task "Draft integration plan"
+```
 
 ## Features
 
 - Local-first Python runtime with optional PySide6 GUI dashboard.
-- Configurable LiteLLM routing across `fast`, `reasoning`, and `local` workflows.
-- Unified memory manager with Redis working memory and ChromaDB episodic/
-  semantic stores.
-- Hybrid automated/human review loop feeding self-adjustment heuristics.
-- Persisted controller drift analytics with Chroma-backed recall and GUI trend visualisations.
-- Strictly typed configuration and models via Pydantic and dataclasses.
-- Append-only memory revision log for audit trails and rollback instrumentation.
-- Remembers the most recent workflow preference and GUI window size between sessions.
-- In-GUI settings editor for modifying the configuration without leaving the application.
+- Configurable LiteLLM routing across fast, reasoning, and local workflows.
+- Unified memory manager spanning Redis working memory and ChromaDB episodic/semantic stores with reflective review cycles.
+- Drift analytics, telemetry panels, and self-adjustment heuristics that surface controller health and automate mitigation plans.
 
-## Getting Started
+## Developer
 
-The project targets **Python 3.12**. Create a virtual environment with that interpreter before installing dependencies.
+- Read the full developer guide in [README-DEV.md](README-DEV.md) for environment details, .env guidance, and deep-dive documentation.
+- Track release history in [CHANGELOG.md](CHANGELOG.md).
 
-1. **Install dependencies**
+## License
 
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-
-2. **Run services**
-
-   ```bash
-   docker compose up -d
-   ```
-
-   - Redis (port 6379) persists working memory.
-   - ChromaDB persists via the Python package; no container is required.
-   - Ollama (port 11434) is available for local inference; pull models with `ollama pull <model>`. When running DRM inside WSL2, the executor now auto-detects the Windows host IP, but you can still override it with `OLLAMA_BASE_URL` if needed. For manual discovery:
-
-     ```bash
-     export WINHOST=$(ip route | grep -oE 'via [0-9.]+' | head -1 | cut -d' ' -f2)
-     export OLLAMA_BASE_URL="http://$WINHOST:11434"
-     ```
-
-3. **Launch the app**
-
-   ```bash
-   python main.py --mode gui        # GUI (requires PySide6)
-   python main.py --mode cli --task "Draft integration plan" --feedback "Looks good"  # CLI fallback with optional human review
-   ```
-
-   The runner detects headless environments automatically and will fall back to
-   CLI mode when no graphical backend is available.
-
-## Configuration
-
-- `config/config.json` controls workflows, providers, and memory locations.
-- `config/config.example.json` provides a starter template; copy it to `config/config.json` and adjust credentials before first run.
-- `config/logging.conf` sets structured logging output.
-- Environment variables are loaded automatically from a local `.env` file (via `python-dotenv`) if present.
-- Provider credentials:
-  - Azure OpenAI: set `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`,
-    and optionally `AZURE_OPENAI_API_VERSION`.
-  - Ollama: override `OLLAMA_BASE_URL` when running a remote instance.
-  - Missing credentials cause a descriptive `WorkflowError` to surface.
-- Enable LiteLLM debugging by setting `llm.enable_debug` to `true` in the
-  configuration when deeper request/response tracing is needed.
-- Automated review can use a distinct provider by setting
-  `review.auto_reviewer_provider`; if omitted it inherits the default workflow's
-  provider.
-- Embeddings (default: Azure OpenAI `text-embedding-3-large`):
-  - Set `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` if your embedding deployment name
-    differs from the model identifier.
-
-## Testing
-
-```bash
-pytest
-```
-
-The suite includes integration coverage for the live task loop, controller drift
-logic, and memory revision logging. Use `pytest -k "live_task_loop"` to focus on
-the orchestration path or `pytest -k revisions` to inspect the logging tests.
-
-## Memory Revision Log
-
-- Memory mutations are appended to `data/logs/memory_revisions.jsonl` by default.
-- Override the location with `DRM_MEMORY_LOG_PATH=/custom/revisions.jsonl` for
-  ephemeral runs or CI pipelines.
-- The GUI "Memory Snapshot" panel surfaces the five most recent revisions
-  alongside other telemetry for quick inspection.
-
-## Semantic Graph
-
-- Semantic concepts automatically link to recent nodes, and the prompt engine
-  surfaces their strongest relationships for context-rich task execution.
-- Drift mitigation routines decay relation weights and prune stale working
-  memory whenever the controller detects performance issues, keeping the active
-  context focused.
-
-## Drift Analytics
-
-- Each controller run emits a drift analytics record capturing latency, verdicts,
-  SLO breaches, and the mitigation plan. Records are persisted both to the
-  Chroma analytics layer and the JSONL revision log for offline analysis.
-- The GUI telemetry tab now includes a **Drift Trends** view summarising moving
-  averages, advisory counts, and the latest workflow bias snapshot.
-- Programmatic access is available via `MemoryManager.list_drift_analytics()` to
-  feed external dashboards or retrospective audits.
-
-## Observability
-
-- Memory operations emit metrics via the `drm.metrics` logger and structured
-  span events via `drm.span`. Extend `config/logging.conf` to route these
-  channels to your preferred observability stack.
-
-## CI & Quality Checks
-
-- `pytest` executes the regression suite; GitHub Actions workflow `.github/workflows/ci.yml` runs it on every push/PR.
-- `mypy .` enforces the strict type configuration defined in `pyproject.toml`.
-- Extend the workflow with additional linters (e.g., `ruff`, `black`) as the codebase grows.
-
-## Memory Seeding
-
-Populate demo data to exercise the GUI and review pipelines:
-
-```bash
-python scripts/seed_memory.py
-```
-
-The script injects a working-memory task plus episodic, semantic, and review
-entries. Re-run to append additional samples.
-
-## GUI Overview
-
-The PySide6 dashboard displays:
-
-- Workflow selector and task input wired to the LiveTaskLoop for launching runs without leaving the GUI.
-- Background task execution keeps the interface responsive while runs progress, showing live status updates.
-- Live memory slices (working, episodic, semantic, review) pulled via
-  `MemoryManager`.
-- Latest drift advisory from the self-adjusting controller plus history pulled
-  from working memory keys.
-- Tabbed panels for recent outputs and review history so you can inspect results and audits side-by-side.
-- Telemetry dashboard streaming live memory metrics, drift advisories, and rolling review history via the in-process telemetry feed.
-- Manual refresh button to inspect updates after CLI or automated runs when telemetry is unavailable.
-
-## Roadmap
-
-1. Implement Redis integration tests with docker-compose fixtures.
-2. Expose the telemetry feed via WebSocket for external observers and dashboards.
-3. Expose drift analytics exports via CLI tooling and webhook adapters.
+Released under the [MIT License](LICENSE).
