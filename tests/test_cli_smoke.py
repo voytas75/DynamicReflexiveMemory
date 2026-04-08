@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+
+import pytest
 
 from config.settings import load_app_config
 from core.user_settings import UserSettingsManager
@@ -14,11 +17,21 @@ from models.workflows import TaskRequest, TaskResult, TaskRunOutcome, WorkflowSe
 class _StubLoop:
     last_instance: "_StubLoop | None" = None
 
-    def __init__(self, _config, user_settings=None) -> None:  # pragma: no cover - simple stub
-        self.last_override = None
+    def __init__(
+        self,
+        _config: object,
+        user_settings: object = None,
+    ) -> None:  # pragma: no cover - simple stub
+        self.last_override: str | None = None
         type(self).last_instance = self
 
-    def run_task(self, *, task: str, workflow_override=None, human_feedback=None):
+    def run_task(
+        self,
+        *,
+        task: str,
+        workflow_override: str | None = None,
+        human_feedback: str | None = None,
+    ) -> TaskRunOutcome:
         assert task == "demo"
         assert human_feedback == "note"
         self.last_override = workflow_override
@@ -44,7 +57,10 @@ class _StubLoop:
         )
 
 
-def test_run_cli_emits_feedback(monkeypatch, caplog) -> None:
+def test_run_cli_emits_feedback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     monkeypatch.setattr("main.LiveTaskLoop", _StubLoop)
     config = load_app_config()
 
@@ -56,7 +72,10 @@ def test_run_cli_emits_feedback(monkeypatch, caplog) -> None:
     assert "Mitigation actions" in caplog.text
 
 
-def test_run_cli_prefers_saved_workflow(monkeypatch, tmp_path) -> None:
+def test_run_cli_prefers_saved_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setattr("main.LiveTaskLoop", _StubLoop)
     config = load_app_config()
 

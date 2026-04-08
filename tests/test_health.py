@@ -35,13 +35,13 @@ def _install_stub_modules(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, redis
 
     redis_module = types.SimpleNamespace(Redis=_RedisClient)
     chroma_module = _build_chroma_stub(tmp_path)
-    litellm_module = types.SimpleNamespace(__version__="1.61.15")
+    litellm_module = types.SimpleNamespace(__version__="1.83.0")
 
     monkeypatch.setitem(sys.modules, "redis", redis_module)
     monkeypatch.setitem(sys.modules, "chromadb", chroma_module)
     monkeypatch.setitem(sys.modules, "litellm", litellm_module)
 
-    monkeypatch.setattr("core.health.metadata.version", lambda _: "1.61.15")
+    monkeypatch.setattr("core.health.metadata.version", lambda _: "1.83.0")
 
 
 def _build_chroma_stub(tmp_path: Path) -> types.SimpleNamespace:
@@ -83,6 +83,7 @@ def test_health_checks_warn_on_redis_failure(monkeypatch: pytest.MonkeyPatch, tm
 def test_health_checks_warn_when_standard_embedding_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config = _load_config(tmp_path)
     config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
+    assert config.embedding is not None
     config.embedding.model = "text-embedding-3-large"
 
     _install_stub_modules(monkeypatch, tmp_path)

@@ -647,9 +647,10 @@ class ChromaMemoryStore:
         return None
 
     def list_layer(self, layer: str) -> List[Dict[str, object]]:
-        """Return layer payloads from the available store."""
+        """Return layer payloads from the available store, ordered oldest to newest."""
         if self._collection is None:
-            return list(self._fallback[layer].values())
+            items = list(self._fallback[layer].values())
+            return self._sort_layer_payloads(layer, items)
 
         try:  # pragma: no cover - depends on chromadb
             query = self._collection.get(
@@ -661,9 +662,21 @@ class ChromaMemoryStore:
             for doc in documents:
                 if isinstance(doc, str):
                     parsed.append(cast(Dict[str, object], json.loads(doc)))
-            return parsed
+            return self._sort_layer_payloads(layer, parsed)
         except Exception as exc:
             raise MemoryError(f"Failed to query {layer} memory: {exc}") from exc
+
+    @staticmethod
+    def _sort_layer_payloads(
+        layer: str,
+        items: Sequence[Dict[str, object]],
+    ) -> List[Dict[str, object]]:
+        """Return payloads in deterministic chronological order for each layer."""
+        timestamp_field = "timestamp" if layer in {"episodic", "semantic"} else "created_at"
+        return sorted(
+            items,
+            key=lambda item: RedisMemoryStore._coerce_timestamp(item.get(timestamp_field)),
+        )
 
     def query_layer(self, layer: str, query: str, limit: int) -> List[Dict[str, object]]:
         """Return layer entries relevant to *query*, preferring semantic search."""

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from core.user_settings import UserSettingsManager
 
 
@@ -21,7 +23,10 @@ def test_user_settings_roundtrip(tmp_path: Path) -> None:
     assert reloaded.settings.window_height == 768
 
 
-def test_user_settings_handles_corruption(tmp_path: Path, caplog) -> None:
+def test_user_settings_handles_corruption(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("{invalid json", encoding="utf-8")
 

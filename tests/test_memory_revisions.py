@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 from config.settings import load_app_config
 from core.memory_manager import MemoryManager
@@ -14,7 +17,10 @@ from models.memory import (
 )
 
 
-def test_memory_revision_log_records_changes(monkeypatch, tmp_path) -> None:
+def test_memory_revision_log_records_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Ensure all memory layers append to the revision log."""
 
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
@@ -54,7 +60,10 @@ def test_memory_revision_log_records_changes(monkeypatch, tmp_path) -> None:
     assert (tmp_path / "revisions.jsonl").exists()
 
 
-def test_revision_log_verification_and_replay(monkeypatch, tmp_path) -> None:
+def test_revision_log_verification_and_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Revision log should expose verification and replay helpers."""
 
     log_path = tmp_path / "revisions.jsonl"
@@ -102,7 +111,10 @@ def test_revision_log_verification_and_replay(monkeypatch, tmp_path) -> None:
     assert not manager.verify_revision_log()
 
 
-def test_query_layer_prefers_relevant_results(monkeypatch, tmp_path) -> None:
+def test_query_layer_prefers_relevant_results(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Querying episodic memory should surface the most relevant entries."""
 
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))

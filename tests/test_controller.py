@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import uuid4
 
 from config.settings import load_app_config
@@ -68,5 +69,7 @@ def test_controller_records_slo_breaches() -> None:
 
     plan = controller.last_plan
     assert plan
-    assert set(plan.get("slo_breaches", [])) == {"latency", "quality"}
-    assert "expand_context_retrieval" in plan.get("recommended_actions", [])
+    slo_breaches = cast(list[str], plan.get("slo_breaches", []))
+    recommended_actions = cast(list[str], plan.get("recommended_actions", []))
+    assert set(slo_breaches) == {"latency", "quality"}
+    assert "expand_context_retrieval" in recommended_actions

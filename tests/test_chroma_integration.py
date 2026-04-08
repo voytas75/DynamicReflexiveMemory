@@ -5,6 +5,8 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
+import pytest
+
 from config.settings import load_app_config
 from core.memory_manager import MemoryManager
 from models.memory import SemanticNode
@@ -14,12 +16,24 @@ class _StubCollection:
     def __init__(self) -> None:
         self._store: dict[str, str] = {}
 
-    def upsert(self, ids=None, documents=None, metadatas=None, **_: object):  # pragma: no cover - stub
+    def upsert(
+        self,
+        ids: list[str] | None = None,
+        documents: list[str] | None = None,
+        metadatas: list[dict[str, object]] | None = None,
+        **_: object,
+    ) -> None:  # pragma: no cover - stub
         if not ids or not documents:
             return
         self._store[ids[0]] = documents[0]
 
-    def get(self, *, where=None, include=None, ids=None):  # pragma: no cover - stub
+    def get(
+        self,
+        *,
+        where: object = None,
+        include: object = None,
+        ids: list[str] | None = None,
+    ) -> dict[str, list[str]]:  # pragma: no cover - stub
         if ids:
             document = self._store.get(ids[0])
             return {"documents": [document] if document else []}
@@ -31,14 +45,21 @@ class _StubClient:
         self._path = path
         self._collection = _StubCollection()
 
-    def get_or_create_collection(self, name: str, embedding_function=None):
+    def get_or_create_collection(
+        self,
+        name: str,
+        embedding_function: object = None,
+    ) -> _StubCollection:
         return self._collection
 
-    def list_collections(self):  # pragma: no cover - stub
+    def list_collections(self) -> list[object]:  # pragma: no cover - stub
         return []
 
 
-def test_semantic_roundtrip_with_chroma_stub(monkeypatch, tmp_path: Path) -> None:
+def test_semantic_roundtrip_with_chroma_stub(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     chroma_stub = types.SimpleNamespace(PersistentClient=_StubClient)
 
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))

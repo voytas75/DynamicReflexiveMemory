@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional, cast
+
+import pytest
 
 from config.settings import load_app_config
 from core.controller import SelfAdjustingController
@@ -50,7 +53,10 @@ class _StubReviewEngine:
         )
 
 
-def test_live_task_loop_persists_memory(monkeypatch, tmp_path) -> None:
+def test_live_task_loop_persists_memory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Running the live loop should persist artefacts and log revisions."""
 
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
@@ -65,8 +71,8 @@ def test_live_task_loop_persists_memory(monkeypatch, tmp_path) -> None:
     loop = LiveTaskLoop(
         config,
         memory_manager=memory_manager,
-        executor=_StubExecutor(),
-        review_engine=_StubReviewEngine(),
+        executor=cast(Any, _StubExecutor()),
+        review_engine=cast(Any, _StubReviewEngine()),
         controller=controller,
     )
 

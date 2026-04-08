@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from config.settings import load_app_config
@@ -9,7 +11,10 @@ from core.memory_manager import MemoryManager
 from models.memory import SemanticNode, WorkingMemoryItem
 
 
-def _bootstrap_manager(monkeypatch, tmp_path) -> MemoryManager:
+def _bootstrap_manager(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> MemoryManager:
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
     monkeypatch.setattr("core.memory_manager.redis_module", None)
     monkeypatch.setattr("core.memory_manager.chromadb_module", None)
@@ -18,7 +23,10 @@ def _bootstrap_manager(monkeypatch, tmp_path) -> MemoryManager:
     return MemoryManager(config)
 
 
-def test_link_semantic_nodes_updates_relations(monkeypatch, tmp_path) -> None:
+def test_link_semantic_nodes_updates_relations(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     manager = _bootstrap_manager(monkeypatch, tmp_path)
 
     node_a = SemanticNode(id="concept:a", label="Alpha", definition="Alpha concept")
@@ -37,7 +45,10 @@ def test_link_semantic_nodes_updates_relations(monkeypatch, tmp_path) -> None:
     assert forward[0][1] == pytest.approx(0.75, abs=1e-6)
 
 
-def test_list_semantic_nodes_returns_ordered(monkeypatch, tmp_path) -> None:
+def test_list_semantic_nodes_returns_ordered(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     manager = _bootstrap_manager(monkeypatch, tmp_path)
 
     first = SemanticNode(id="concept:old", label="Old", definition="Old concept")
@@ -53,7 +64,10 @@ def test_list_semantic_nodes_returns_ordered(monkeypatch, tmp_path) -> None:
     assert [node.id for node in limited] == [second.id]
 
 
-def test_apply_drift_mitigation_prunes_working(monkeypatch, tmp_path) -> None:
+def test_apply_drift_mitigation_prunes_working(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     manager = _bootstrap_manager(monkeypatch, tmp_path)
 
     for index in range(3):
