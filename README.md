@@ -7,7 +7,7 @@ Dynamic Reflexive Memory (DRM) is an adaptive memory substrate for LLM workflows
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 docker compose up -d
 ```
 
