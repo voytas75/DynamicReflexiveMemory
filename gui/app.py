@@ -12,6 +12,7 @@ Updates:
     v0.9 - 2025-11-07 - Added settings dialog for editing configuration values.
     v0.10 - 2025-11-08 - Wired telemetry-driven metrics, drift advisories, and review panes.
     v0.11 - 2025-11-08 - Visualised drift analytics trends with persistent telemetry data.
+    v0.12 - 2026-05-11 - Hardened fallback Qt stubs and numeric telemetry coercion for strict mypy.
 """
 
 from __future__ import annotations
@@ -23,7 +24,17 @@ import sys
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Mapping, Optional, Sequence, TYPE_CHECKING, cast
+from typing import (
+    Any,
+    Deque,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+    cast,
+)
 
 from config.settings import AppConfig
 from core.controller import SelfAdjustingController
@@ -70,7 +81,6 @@ else:  # pragma: no cover - runtime optional dependency
             QWidget,
         )
     except ImportError:
-        QApplication = None
 
         class QObject:
             def __init__(self, *_: Any, **__: Any) -> None:
@@ -222,6 +232,7 @@ else:  # pragma: no cover - runtime optional dependency
             def exec(self) -> int:  # pragma: no cover - stub
                 return 0
 
+
 LOGGER = logging.getLogger("drm.gui")
 
 
@@ -258,6 +269,16 @@ def _probe_qt_initialisation() -> tuple[bool, Optional[str]]:
         stderr_output = probe.stderr.decode().strip() or None
         return False, stderr_output
     return True, None
+
+
+def _coerce_optional_float(value: object) -> Optional[float]:
+    """Convert scalar JSON values to float when possible."""
+    if isinstance(value, (str, int, float)):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
 
 
 class TaskExecutionWorker(QObject):  # pragma: no cover - requires GUI runtime
@@ -446,11 +467,15 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
 
         task_text = self._task_input.toPlainText().strip()
         if not task_text:
-            QMessageBox.warning(self, "Task Required", "Enter a task prompt before running.")
+            QMessageBox.warning(
+                self, "Task Required", "Enter a task prompt before running."
+            )
             return
 
         workflow_data = self._workflow_selector.currentData()
-        workflow: Optional[str] = workflow_data if isinstance(workflow_data, str) else None
+        workflow: Optional[str] = (
+            workflow_data if isinstance(workflow_data, str) else None
+        )
 
         self._set_interaction_enabled(False)
         self._status_label.setText("Running task…")
@@ -458,7 +483,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         feedback_text = self._feedback_input.toPlainText().strip()
         human_feedback = feedback_text or None
 
-        worker = TaskExecutionWorker(self._task_loop, task_text, workflow, human_feedback)
+        worker = TaskExecutionWorker(
+            self._task_loop, task_text, workflow, human_feedback
+        )
         thread = QThread(self)
         worker.moveToThread(thread)
         cast(Any, thread.started).connect(worker.run)
@@ -551,7 +578,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         except MemoryError as exc:
             LOGGER.error("Failed to load memory snapshot: %s", exc)
             self._memory_view.setPlainText(f"Unable to load memory snapshot: {exc}")
-            self._review_history_view.setPlainText(f"Unable to load review history: {exc}")
+            self._review_history_view.setPlainText(
+                f"Unable to load review history: {exc}"
+            )
             return
 
         drift_items: List[WorkingMemoryItem] = [
@@ -599,7 +628,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         self._memory_view.setPlainText("\n".join(lines))
 
         self._drift_label.setText(drift_summary)
-        self._bias_label.setText(self._format_bias_summary(self._controller.workflow_biases))
+        self._bias_label.setText(
+            self._format_bias_summary(self._controller.workflow_biases)
+        )
         try:
             metrics_snapshot = self._memory_manager.snapshot_metrics()
         except Exception as exc:  # pragma: no cover - defensive path
@@ -701,7 +732,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
                 fetched = self._memory_manager.list_layer("review")
             except MemoryError as exc:
                 LOGGER.error("Failed to load review history: %s", exc)
-                self._review_history_view.setPlainText(f"Unable to load review history: {exc}")
+                self._review_history_view.setPlainText(
+                    f"Unable to load review history: {exc}"
+                )
                 return
             self._replace_review_records(fetched)
             records = list(self._review_history_buffer)
@@ -720,7 +753,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             notes_raw = record.get("notes")
             notes = str(notes_raw) if notes_raw is not None else "n/a"
             quality = record.get("quality_score")
-            quality_text = f"{quality:.2f}" if isinstance(quality, (int, float)) else "n/a"
+            quality_text = (
+                f"{quality:.2f}" if isinstance(quality, (int, float)) else "n/a"
+            )
             suggestions_value = record.get("suggestions")
             if isinstance(suggestions_value, list) and suggestions_value:
                 suggestions_text = "; ".join(str(item) for item in suggestions_value)
@@ -855,11 +890,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         records = list(self._drift_analytics)
         latencies: List[float] = []
         for record in records:
-            value = record.get("latency_seconds")
-            try:
-                latencies.append(float(value))
-            except (TypeError, ValueError):
-                continue
+            latency = _coerce_optional_float(record.get("latency_seconds"))
+            if latency is not None:
+                latencies.append(latency)
 
         average_latency: Optional[float] = None
         if latencies:
@@ -892,7 +925,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
                 except (TypeError, ValueError):
                     continue
             if bias_segments:
-                summary_lines.append("Latest bias snapshot: " + ", ".join(bias_segments))
+                summary_lines.append(
+                    "Latest bias snapshot: " + ", ".join(bias_segments)
+                )
 
         summary_lines.append("")
         summary_lines.append("Recent records:")
@@ -976,11 +1011,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         else:
             mitigation_plan = {}
 
-        latency_raw = payload.get("latency_seconds")
-        try:
-            latency = float(latency_raw)
-        except (TypeError, ValueError):
-            latency = None
+        latency = _coerce_optional_float(payload.get("latency_seconds"))
 
         advisory_raw = payload.get("drift_advisory")
         drift_advisory = None
@@ -1031,7 +1062,9 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
         if isinstance(created_at_value, datetime):
             stored["created_at"] = created_at_value.isoformat()
         existing.append(stored)
-        existing.sort(key=lambda payload: self._coerce_datetime(payload.get("created_at")))
+        existing.sort(
+            key=lambda payload: self._coerce_datetime(payload.get("created_at"))
+        )
         if len(existing) > 15:
             existing = existing[-15:]
         self._review_history_buffer = existing
@@ -1086,7 +1119,7 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             return
 
         dialog = SettingsDialog(self._config, self._config_path, parent=self)
-        if dialog.exec() != QDialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
         new_config = dialog.result_config()

@@ -134,7 +134,9 @@ class TaskExecutor:
 
         if self._controller and not requested:
             biases = self._controller.workflow_biases
-            bias_choice, bias_reason = self._apply_controller_bias(chosen, workflows, biases)
+            bias_choice, bias_reason = self._apply_controller_bias(
+                chosen, workflows, biases
+            )
             if bias_choice != chosen:
                 chosen = bias_choice
                 rationale = bias_reason or "Controller preference override"
@@ -207,7 +209,10 @@ class TaskExecutor:
                 response = litellm.completion(
                     model=model_identifier,
                     messages=[
-                        {"role": "system", "content": request.context.get("system", "")},
+                        {
+                            "role": "system",
+                            "content": request.context.get("system", ""),
+                        },
                         {"role": "user", "content": request.prompt},
                     ],
                     temperature=workflow_cfg.temperature,

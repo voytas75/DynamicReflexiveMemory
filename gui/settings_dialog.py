@@ -3,11 +3,13 @@
 Updates:
     v0.1 - 2025-11-07 - Added tabbed configuration editor covering LLM, memory,
         review, embedding, and telemetry settings.
+    v0.2 - 2026-05-11 - Updated Qt enum usage and config path typing for strict mypy.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Optional
 
 from PySide6.QtCore import Qt
@@ -49,7 +51,7 @@ class SettingsDialog(QDialog):
     def __init__(
         self,
         config: AppConfig,
-        config_path,
+        config_path: Path,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -69,7 +71,10 @@ class SettingsDialog(QDialog):
         self._build_embedding_tab()
         self._build_telemetry_tab()
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self._handle_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -174,9 +179,7 @@ class SettingsDialog(QDialog):
         form.addRow("Embedding provider:", self._embedding_provider_edit)
         self._embedding_model_edit = QLineEdit()
         form.addRow("Embedding model:", self._embedding_model_edit)
-        self._embedding_enabled_checkbox.toggled.connect(
-            self._handle_embedding_toggle
-        )
+        self._embedding_enabled_checkbox.toggled.connect(self._handle_embedding_toggle)
         self._tabs.addTab(tab, "Embedding")
 
     def _build_telemetry_tab(self) -> None:
@@ -209,7 +212,9 @@ class SettingsDialog(QDialog):
             self._workflows_table.setItem(row, 1, QTableWidgetItem(data.provider))
             self._workflows_table.setItem(row, 2, QTableWidgetItem(data.model))
             temp_item = QTableWidgetItem(f"{data.temperature:.2f}")
-            temp_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            temp_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
             self._workflows_table.setItem(row, 3, temp_item)
 
         self._rebuild_default_workflow_choices()
@@ -257,7 +262,9 @@ class SettingsDialog(QDialog):
         self._workflows_table.setItem(row, 1, QTableWidgetItem("provider"))
         self._workflows_table.setItem(row, 2, QTableWidgetItem("model"))
         temp_item = QTableWidgetItem("0.20")
-        temp_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        temp_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self._workflows_table.setItem(row, 3, temp_item)
         self._rebuild_default_workflow_choices()
 

@@ -3,13 +3,13 @@
 ## Current Status
 - Primary entry point is `main.py`, which launches the PySide6 GUI by default and falls back to CLI mode automatically in headless environments.
 - Data layer combines Redis (working memory), ChromaDB (episodic/semantic stores), and persisted review cycles handed off to the GUI telemetry panels.
-- Strict typing enforced through Pydantic models, dataclasses, and pyright strict mode for core modules.
+- Strict typing enforced through Pydantic models, dataclasses, and mypy strict mode for core modules.
 - Local runtime first; external providers are optional and configured through environment variables or `config/config.json`.
 
 ## Environment & Tooling
 - Target interpreter: **Python 3.12**; create a dedicated virtual environment per workspace.
 - Formatting: `black` (line length 88) + `isort`; linting via `ruff --fix`.
-- Type checking: `pyright --strict` (or `npx pyright` if installed globally) before publishing changes.
+- Type checking: `mypy .` before publishing changes.
 - Testing stack: `pytest`, `pytest-asyncio`, `pytest-cov`, `hypothesis`, and `vcrpy` for HTTP fixtures.
 
 ## Detailed Getting Started
@@ -17,7 +17,7 @@
    ```bash
    python -m venv .venv
    source .venv/bin/activate
-   pip install -e .
+   pip install -e ".[dev]"
    ```
 2. **Launch local services**
    ```bash
@@ -55,14 +55,14 @@
 ## Testing & Quality Gates
 - Install dev requirements and run the full gate before merging:
   ```bash
-  pytest -n auto --cov=src --cov-fail-under=85 --disable-warnings -q
-  pyright
-  ruff check --fix
-  black .
+  pytest --cov --cov-fail-under=85 --disable-warnings -q
+  mypy .
+  ruff check .
+  black --check .
   ```
 - Favor `hypothesis` strategies for boundary inputs (long prompts, Unicode edge cases, malformed JSON payloads).
 - Mock outbound HTTP/database calls with `pytest-mock`, `vcrpy`, or async test clients to keep suites deterministic.
-- Keep coverage ≥90% on core logic modules; justify exceptions in PR descriptions if temporary.
+- Keep coverage ≥85% on core logic modules; justify exceptions in PR descriptions if temporary.
 
 ## Memory & Telemetry
 - **Memory Revision Log**: mutations append to `data/logs/memory_revisions.jsonl`; use `DRM_MEMORY_LOG_PATH` to override for CI. Treat the log as append-only for auditability.
@@ -71,8 +71,8 @@
 - **Observability**: extend `drm.metrics` and `drm.span` loggers for custom sinks. Wrap external I/O with timeout-aware calls and surface actionable exception messages.
 
 ## CI & Automation
-- GitHub Actions workflow `.github/workflows/ci.yml` runs `pytest`, coverage, and `mypy/pyright` on each push/PR; extend with lint checks as needed.
-- Prefer `uv pip compile` / lockfiles for dependency pinning; audit transitive dependencies regularly.
+- GitHub Actions workflow `.github/workflows/ci.yml` installs `.[dev]` and runs pytest coverage, mypy, Ruff, and Black checks on each push/PR.
+- Runtime dependencies are pinned in both `pyproject.toml` and `requirements.txt`; audit transitive dependencies regularly.
 
 ## Utilities
 - **Memory Seeding**: run `python scripts/seed_memory.py` to populate demo working/episodic/semantic/review entries for GUI demos.

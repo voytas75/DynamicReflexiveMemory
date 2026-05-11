@@ -81,7 +81,11 @@ def run_cli(
         "Review verdict: %s (auto=%s, quality=%s)",
         outcome.review.verdict,
         outcome.review.auto_verdict,
-        f"{outcome.review.quality_score:.2f}" if outcome.review.quality_score is not None else "n/a",
+        (
+            f"{outcome.review.quality_score:.2f}"
+            if outcome.review.quality_score is not None
+            else "n/a"
+        ),
     )
     if outcome.review.suggestions:
         logger.info("Review suggestions: %s", "; ".join(outcome.review.suggestions))
@@ -103,12 +107,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--config", type=Path, help="Path to configuration file.")
     parser.add_argument("--task", type=str, help="Task prompt for CLI mode.")
     parser.add_argument("--workflow", type=str, help="Workflow override for execution.")
-    parser.add_argument("--logging-config", type=Path, help="Path to logging configuration.")
-    parser.add_argument("--feedback", type=str, help="Optional human review feedback for the task.")
+    parser.add_argument(
+        "--logging-config", type=Path, help="Path to logging configuration."
+    )
+    parser.add_argument(
+        "--feedback", type=str, help="Optional human review feedback for the task."
+    )
     args = parser.parse_args(argv)
 
     try:
-        config_path = resolve_config_path(args.config) if args.config else resolve_config_path()
+        config_path = (
+            resolve_config_path(args.config) if args.config else resolve_config_path()
+        )
         config = get_app_config(config_path)
         setup_logging(args.logging_config)
         user_settings = UserSettingsManager()

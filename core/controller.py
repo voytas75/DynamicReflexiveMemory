@@ -197,6 +197,7 @@ class SelfAdjustingController:
             target = reasoning_workflow if workflow == fast_workflow else fast_workflow
             if target:
                 self._bump_bias(target, 0.1)
+
     def _build_mitigation_plan(
         self,
         selection: WorkflowSelection,

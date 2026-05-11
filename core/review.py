@@ -231,9 +231,14 @@ class ReviewEngine:
             return value
 
         if isinstance(value, Mapping):
-            return {str(key): ReviewEngine._to_json_safe(item) for key, item in value.items()}
+            return {
+                str(key): ReviewEngine._to_json_safe(item)
+                for key, item in value.items()
+            }
 
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             return [ReviewEngine._to_json_safe(item) for item in value]
 
         model_dump = getattr(value, "model_dump", None)
@@ -300,7 +305,9 @@ class ReviewEngine:
                 continue
             upper = line.upper()
             if upper.startswith("VERDICT"):
-                verdict = line.split(":", 1)[1].strip() if ":" in line else line[7:].strip()
+                verdict = (
+                    line.split(":", 1)[1].strip() if ":" in line else line[7:].strip()
+                )
                 collecting_suggestions = False
                 continue
             if upper.startswith("QUALITY_SCORE"):

@@ -31,6 +31,7 @@ python main.py --mode cli --task "Draft integration plan"
 - Configurable LiteLLM routing across fast, reasoning, and local workflows.
 - Unified memory manager spanning Redis working memory and ChromaDB episodic/semantic stores with reflective review cycles.
 - Drift analytics, telemetry panels, and self-adjustment heuristics that surface controller health and automate mitigation plans.
+- CI-aligned quality gates for pytest coverage, mypy, Ruff, and Black.
 
 ## Developer
 

@@ -88,7 +88,9 @@ def _check_litellm() -> List[str]:
     try:
         import litellm  # noqa: F401
     except ImportError:
-        raise HealthCheckError("litellm is required for workflow execution but is missing.")
+        raise HealthCheckError(
+            "litellm is required for workflow execution but is missing."
+        )
 
     try:
         installed = metadata.version("litellm")
@@ -97,9 +99,7 @@ def _check_litellm() -> List[str]:
 
     expected = "1.83.0"
     if installed != expected:
-        return [
-            f"litellm version {installed} detected; expected {expected}."
-        ]
+        return [f"litellm version {installed} detected; expected {expected}."]
     return []
 
 
@@ -117,9 +117,7 @@ def _check_credentials(config: AppConfig) -> List[str]:
             if not os.getenv(var)
         ]
         if missing:
-            warnings.append(
-                "Azure OpenAI credentials missing: " + ", ".join(missing)
-            )
+            warnings.append("Azure OpenAI credentials missing: " + ", ".join(missing))
 
     embedding = config.embedding
     if embedding and embedding.provider.lower() == "azure":

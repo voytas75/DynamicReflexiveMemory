@@ -10,6 +10,7 @@ Updates:
     v0.7 - 2025-11-08 - Added resilient Redis reconnection and fallback handling.
     v0.8 - 2025-11-08 - Published telemetry metrics snapshots for GUI monitoring.
     v0.9 - 2025-11-08 - Added drift analytics layer and metrics reporting hooks.
+    v0.10 - 2026-05-11 - Tightened metric payload typing and JSON score/latency coercion for strict mypy.
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ class MemoryRevisionLogger:
     def log(self, layer: str, identifier: str, payload: Dict[str, object]) -> None:
         """Append a revision entry capturing the memory mutation."""
         with self._lock:
-            record = {
+            record: Dict[str, object] = {
                 "layer": layer,
                 "id": identifier,
                 "payload": payload,
@@ -141,7 +142,8 @@ class MemoryRevisionLogger:
             computed = self._calculate_hash(record)
             if computed != record.get("hash"):
                 return False
-            expected_prev = record.get("hash")
+            record_hash = record.get("hash")
+            expected_prev = record_hash if isinstance(record_hash, str) else None
         return True
 
     def replay_layer(
@@ -275,7 +277,9 @@ class RedisMemoryStore:
                 payload_bytes = client.get(key)
                 if payload_bytes is None:
                     return None
-                data = cast(Dict[str, object], json.loads(payload_bytes.decode("utf-8")))
+                data = cast(
+                    Dict[str, object], json.loads(payload_bytes.decode("utf-8"))
+                )
                 key_value = str(data.get("key", ""))
                 payload_value = cast(Dict[str, object], data.get("payload", {}))
                 ttl_value_raw = data.get("ttl_seconds", self._ttl_seconds)
@@ -325,7 +329,9 @@ class RedisMemoryStore:
                     payload_bytes = client.get(key)
                     if not payload_bytes:
                         continue
-                    data = cast(Dict[str, object], json.loads(payload_bytes.decode("utf-8")))
+                    data = cast(
+                        Dict[str, object], json.loads(payload_bytes.decode("utf-8"))
+                    )
                     key_value = (
                         key.decode("utf-8") if isinstance(key, bytes) else str(key)
                     )
@@ -572,9 +578,7 @@ class ChromaMemoryStore:
                     )
                     return [item.embedding for item in response.data]
                 except Exception as exc:  # pragma: no cover
-                    raise MemoryError(
-                        f"Azure embedding request failed: {exc}"
-                    ) from exc
+                    raise MemoryError(f"Azure embedding request failed: {exc}") from exc
 
         return AzureEmbeddingFunction(client, deployment_name)
 
@@ -633,7 +637,9 @@ class ChromaMemoryStore:
                 include=["documents"],
             )
         except Exception as exc:  # pragma: no cover - chromadb failure
-            raise MemoryError(f"Failed to fetch semantic node {node_id}: {exc}") from exc
+            raise MemoryError(
+                f"Failed to fetch semantic node {node_id}: {exc}"
+            ) from exc
 
         documents = response.get("documents") or []
         if not documents:
@@ -672,13 +678,19 @@ class ChromaMemoryStore:
         items: Sequence[Dict[str, object]],
     ) -> List[Dict[str, object]]:
         """Return payloads in deterministic chronological order for each layer."""
-        timestamp_field = "timestamp" if layer in {"episodic", "semantic"} else "created_at"
+        timestamp_field = (
+            "timestamp" if layer in {"episodic", "semantic"} else "created_at"
+        )
         return sorted(
             items,
-            key=lambda item: RedisMemoryStore._coerce_timestamp(item.get(timestamp_field)),
+            key=lambda item: RedisMemoryStore._coerce_timestamp(
+                item.get(timestamp_field)
+            ),
         )
 
-    def query_layer(self, layer: str, query: str, limit: int) -> List[Dict[str, object]]:
+    def query_layer(
+        self, layer: str, query: str, limit: int
+    ) -> List[Dict[str, object]]:
         """Return layer entries relevant to *query*, preferring semantic search."""
         limit = max(1, limit)
         normalized_query = query.strip()
@@ -716,7 +728,7 @@ class ChromaMemoryStore:
                     enriched["_score"] = round(score, 6)
                     ranked.append(enriched)
                 if ranked:
-                    ranked.sort(key=lambda item: item.get("_score", 0.0), reverse=True)
+                    ranked.sort(key=self._score_from_payload, reverse=True)
                     return ranked[:limit]
             except Exception as exc:
                 self._logger.warning(
@@ -748,11 +760,23 @@ class ChromaMemoryStore:
             if similarity <= 0.05:
                 continue
             candidate = dict(payload)
-            candidate["_score"] = round(similarity, 6)
-            scored.append((candidate["_score"], candidate))
+            score = round(similarity, 6)
+            candidate["_score"] = score
+            scored.append((score, candidate))
 
         scored.sort(key=lambda item: item[0], reverse=True)
         return [item[1] for item in scored[:limit]]
+
+    @staticmethod
+    def _score_from_payload(payload: Dict[str, object]) -> float:
+        """Return a sortable score from a JSON-like payload."""
+        value = payload.get("_score")
+        if isinstance(value, (str, int, float)):
+            try:
+                return float(value)
+            except ValueError:
+                return 0.0
+        return 0.0
 
 
 class MemoryManager:
@@ -856,7 +880,9 @@ class MemoryManager:
             return []
         return records[-limit:]
 
-    def link_semantic_nodes(self, source_id: str, target_id: str, weight: float = 0.5) -> None:
+    def link_semantic_nodes(
+        self, source_id: str, target_id: str, weight: float = 0.5
+    ) -> None:
         """Create or update a bidirectional relation between semantic nodes."""
         if source_id == target_id:
             return
@@ -949,7 +975,9 @@ class MemoryManager:
             raise MemoryError(f"Unsupported memory layer requested: {layer}")
         return self._chroma_store.list_layer(layer)
 
-    def query_layer(self, layer: str, query: str, limit: int = 5) -> List[Dict[str, object]]:
+    def query_layer(
+        self, layer: str, query: str, limit: int = 5
+    ) -> List[Dict[str, object]]:
         """Search stored items for the requested layer."""
         if layer not in {"episodic", "semantic", "review", "analytics"}:
             raise MemoryError(f"Unsupported memory layer requested: {layer}")
@@ -996,7 +1024,9 @@ class MemoryManager:
                 try:
                     self._redis_store.delete(item.key)
                 except MemoryError as exc:
-                    self._logger.error("Failed to prune working memory %s: %s", item.key, exc)
+                    self._logger.error(
+                        "Failed to prune working memory %s: %s", item.key, exc
+                    )
                     continue
                 self._revision_logger.log(
                     "working",
@@ -1113,9 +1143,9 @@ class MemoryManager:
         self._publish_metrics_snapshot()
         return summary
 
-    def snapshot_metrics(self) -> Dict[str, int]:
+    def snapshot_metrics(self) -> Dict[str, object]:
         """Snapshot counts across memory layers for telemetry."""
-        metrics: Dict[str, int] = {}
+        metrics: Dict[str, object] = {}
         working_items: List[WorkingMemoryItem] = []
         try:
             working_items = self.list_working_items()
@@ -1124,14 +1154,18 @@ class MemoryManager:
                 1 for item in working_items if item.key.endswith(":drift")
             )
         except Exception as exc:  # pragma: no cover - defensive path
-            self._logger.debug("Unable to enumerate working memory for metrics: %s", exc)
+            self._logger.debug(
+                "Unable to enumerate working memory for metrics: %s", exc
+            )
 
         for layer in ("episodic", "semantic", "review", "analytics"):
             key = f"{layer}_records"
             try:
                 metrics[key] = len(self.list_layer(layer))
             except MemoryError as exc:
-                self._logger.debug("Unable to enumerate %s layer for metrics: %s", layer, exc)
+                self._logger.debug(
+                    "Unable to enumerate %s layer for metrics: %s", layer, exc
+                )
 
         return metrics
 
@@ -1142,7 +1176,7 @@ class MemoryManager:
             self._logger.debug("Skipping telemetry metrics snapshot: %s", exc)
             return
         if metrics:
-            publish_event("memory.metrics", **metrics)
+            publish_event("memory.metrics", payload=metrics)
 
     def _hydrate_semantic(self, payload: Dict[str, object]) -> Optional[SemanticNode]:
         try:
@@ -1194,11 +1228,7 @@ class MemoryManager:
         task_reference = str(payload.get("task_reference") or "unknown")
         workflow = str(payload.get("workflow") or "unknown")
 
-        latency_raw = payload.get("latency_seconds", 0.0)
-        try:
-            latency = float(latency_raw)
-        except (TypeError, ValueError):
-            latency = 0.0
+        latency = self._coerce_float(payload.get("latency_seconds"), default=0.0)
 
         verdict = str(payload.get("verdict") or "unknown")
 
@@ -1244,3 +1274,18 @@ class MemoryManager:
             mitigation_plan=mitigation_plan,
             created_at=created_at,
         )
+
+    @staticmethod
+    def _score_from_payload(payload: Dict[str, object]) -> float:
+        """Return a sortable score from a JSON-like payload."""
+        return MemoryManager._coerce_float(payload.get("_score"), default=0.0)
+
+    @staticmethod
+    def _coerce_float(value: object, *, default: float) -> float:
+        """Convert scalar JSON values to float with a safe default."""
+        if isinstance(value, (str, int, float)):
+            try:
+                return float(value)
+            except ValueError:
+                return default
+        return default

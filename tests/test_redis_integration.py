@@ -98,7 +98,9 @@ def _is_port_in_use(host: str, port: int) -> bool:
         return result == 0
 
 
-def _build_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ttl: int = 3) -> RedisMemoryStore:
+def _build_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ttl: int = 3
+) -> RedisMemoryStore:
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
     config = load_app_config()
     config.memory.redis.port = TEST_REDIS_PORT

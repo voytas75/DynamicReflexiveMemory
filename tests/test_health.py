@@ -23,7 +23,9 @@ def _load_config(tmp_path: Path) -> settings.AppConfig:
     return settings.load_app_config(config_path)
 
 
-def _install_stub_modules(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, redis_ping_ok: bool = True) -> None:
+def _install_stub_modules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, redis_ping_ok: bool = True
+) -> None:
     class _RedisClient:
         def __init__(self, **_: object) -> None:
             pass
@@ -55,7 +57,9 @@ def _build_chroma_stub(tmp_path: Path) -> types.SimpleNamespace:
     return types.SimpleNamespace(PersistentClient=_Client)
 
 
-def test_health_checks_with_stubbed_dependencies(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_health_checks_with_stubbed_dependencies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = _load_config(tmp_path)
     config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
 
@@ -69,7 +73,9 @@ def test_health_checks_with_stubbed_dependencies(monkeypatch: pytest.MonkeyPatch
     assert warnings == []
 
 
-def test_health_checks_warn_on_redis_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_health_checks_warn_on_redis_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = _load_config(tmp_path)
     config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
 
@@ -80,7 +86,9 @@ def test_health_checks_warn_on_redis_failure(monkeypatch: pytest.MonkeyPatch, tm
     assert any("redis unavailable" in warning for warning in warnings)
 
 
-def test_health_checks_warn_when_standard_embedding_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_health_checks_warn_when_standard_embedding_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = _load_config(tmp_path)
     config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
     assert config.embedding is not None
@@ -97,7 +105,9 @@ def test_health_checks_warn_when_standard_embedding_missing(monkeypatch: pytest.
     assert any("embedding deployment" in warning for warning in warnings)
 
 
-def test_health_checks_skip_warning_for_custom_embedding(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_health_checks_skip_warning_for_custom_embedding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = _load_config(tmp_path)
     config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
 

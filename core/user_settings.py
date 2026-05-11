@@ -82,9 +82,13 @@ class UserSettingsManager:
         width = payload.get("window_width")
         height = payload.get("window_height")
         self._settings = UserSettings(
-            last_workflow=str(last_workflow) if isinstance(last_workflow, str) else None,
+            last_workflow=(
+                str(last_workflow) if isinstance(last_workflow, str) else None
+            ),
             window_width=int(width) if isinstance(width, int) and width > 0 else None,
-            window_height=int(height) if isinstance(height, int) and height > 0 else None,
+            window_height=(
+                int(height) if isinstance(height, int) and height > 0 else None
+            ),
         )
 
     def _save(self) -> None:

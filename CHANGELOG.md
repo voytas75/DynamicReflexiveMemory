@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/) and dates use ISO-8601 (`YYYY-MM-DD`).
 
+## [0.1.9] - 2026-05-11
+
+### Added
+- Restored pinned runtime dependencies in `requirements.txt` and added pinned runtime/dev dependency metadata in `pyproject.toml`.
+- Added coverage configuration and focused tests for executor, review, live-loop, telemetry, memory mitigation, and configuration helpers.
+
+### Changed
+- CI now installs `.[dev]` and enforces pytest coverage, mypy, Ruff, and Black checks.
+- Formatted the codebase with Black and fixed Ruff/mypy issues in core and GUI modules.
+- Updated developer documentation to match the implemented quality gate and mypy-based type checking workflow.
+
 ## [0.1.8] - 2025-11-08
 
 ### Added

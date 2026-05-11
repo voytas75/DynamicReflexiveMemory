@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Mapping, Optional, Sequence, cast
+from typing import Dict, List, Optional, Sequence, cast
 from uuid import uuid4
 
 from config.settings import AppConfig
@@ -155,8 +155,12 @@ class LiveTaskLoop:
 
         memory_actions: Optional[Dict[str, object]] = None
         if drift_advisory:
-            memory_actions = self._memory_manager.apply_drift_mitigation(task_id=request.task_id)
-            self._persist_drift_advisory(request.task_id, selection.workflow, drift_advisory)
+            memory_actions = self._memory_manager.apply_drift_mitigation(
+                task_id=request.task_id
+            )
+            self._persist_drift_advisory(
+                request.task_id, selection.workflow, drift_advisory
+            )
         elif controller_plan:
             self._logger.debug(
                 "Controller produced plan without drift advisory: %s", controller_plan
@@ -280,7 +284,9 @@ class LiveTaskLoop:
                 continue
             try:
                 base_weight = 0.6 if selection.workflow in related.sources else 0.4
-                self._memory_manager.link_semantic_nodes(node.id, related.id, base_weight)
+                self._memory_manager.link_semantic_nodes(
+                    node.id, related.id, base_weight
+                )
             except MemoryError as exc:
                 self._logger.error(
                     "Failed to link semantic concept %s -> %s: %s",
@@ -298,7 +304,9 @@ class LiveTaskLoop:
 
     @staticmethod
     def _build_semantic_definition(result: TaskResult) -> str:
-        snippet = result.content.strip().splitlines()[0] if result.content.strip() else ""
+        snippet = (
+            result.content.strip().splitlines()[0] if result.content.strip() else ""
+        )
         snippet = snippet.strip()
         if not snippet:
             return ""
@@ -488,13 +496,17 @@ class LiveTaskLoop:
                 suggestions = []
 
             quality_raw = payload.get("quality_score")
-            quality_score = float(quality_raw) if isinstance(quality_raw, (int, float)) else None
+            quality_score = (
+                float(quality_raw) if isinstance(quality_raw, (int, float)) else None
+            )
 
             notes_raw = payload.get("notes")
             notes = str(notes_raw) if notes_raw is not None else None
 
             auto_verdict_raw = payload.get("auto_verdict")
-            auto_verdict = str(auto_verdict_raw) if auto_verdict_raw is not None else None
+            auto_verdict = (
+                str(auto_verdict_raw) if auto_verdict_raw is not None else None
+            )
 
             review_id = str(payload.get("id") or f"hydrated:{uuid4().hex}")
             task_reference = str(payload.get("task_reference") or "unknown")
@@ -518,7 +530,9 @@ class LiveTaskLoop:
         try:
             self._memory_manager.record_episodic(entry)
         except MemoryError as exc:
-            self._logger.error("Failed to persist episodic memory %s: %s", entry.id, exc)
+            self._logger.error(
+                "Failed to persist episodic memory %s: %s", entry.id, exc
+            )
 
     @staticmethod
     def _coerce_timestamp(value: object) -> datetime:

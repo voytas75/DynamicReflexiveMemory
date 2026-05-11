@@ -18,7 +18,12 @@ from uuid import uuid4
 from config.settings import get_app_config, resolve_config_path
 from core.exceptions import DRMError
 from core.memory_manager import MemoryManager
-from models.memory import EpisodicMemoryEntry, ReviewRecord, SemanticNode, WorkingMemoryItem
+from models.memory import (
+    EpisodicMemoryEntry,
+    ReviewRecord,
+    SemanticNode,
+    WorkingMemoryItem,
+)
 
 
 LOGGER = logging.getLogger("drm.seed")
@@ -97,7 +102,9 @@ def seed_memory(config_path: Path | None = None) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Seed DRM memory layers with demo data.")
+    parser = argparse.ArgumentParser(
+        description="Seed DRM memory layers with demo data."
+    )
     parser.add_argument("--config", type=Path, help="Optional path to config.json.")
     args = parser.parse_args(argv)
 

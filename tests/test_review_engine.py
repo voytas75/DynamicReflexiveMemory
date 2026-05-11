@@ -2,6 +2,7 @@
 
 Updates: v0.1 - 2025-11-07 - Added regression tests for automated review parsing
 and LiveTaskLoop orchestration.
+Updates: v0.2 - 2026-05-11 - Added review disabled, timeout, and human feedback coverage.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from typing import Any, Dict, List
 import pytest
 
 from config import settings
+from core.exceptions import ReviewError
 from core.live_loop import LiveTaskLoop
 from core.review import ReviewEngine
 from models.workflows import TaskRequest, TaskResult
@@ -53,7 +55,9 @@ def test_parse_automated_review_structured_fields(tmp_path: Path) -> None:
     ]
 
 
-def test_live_task_loop_persists_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_live_task_loop_persists_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _load_sample_config(tmp_path)
     config.review.auto_reviewer_model = "review-stub"
     config.review.auto_reviewer_provider = "ollama"
@@ -144,7 +148,9 @@ def test_to_json_safe_serialises_usage_objects() -> None:
     }
 
 
-def test_resolve_model_configuration_uses_azure_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_model_configuration_uses_azure_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = settings.AppConfig.model_validate(
         {
             "version": "0.1",
@@ -165,8 +171,16 @@ def test_resolve_model_configuration_uses_azure_provider(monkeypatch: pytest.Mon
                 "enable_debug": False,
             },
             "memory": {
-                "redis": {"host": "localhost", "port": 6379, "db": 0, "ttl_seconds": 120},
-                "chromadb": {"persist_directory": "data/chromadb", "collection": "test"},
+                "redis": {
+                    "host": "localhost",
+                    "port": 6379,
+                    "db": 0,
+                    "ttl_seconds": 120,
+                },
+                "chromadb": {
+                    "persist_directory": "data/chromadb",
+                    "collection": "test",
+                },
             },
             "review": {
                 "enabled": True,
@@ -189,14 +203,18 @@ def test_resolve_model_configuration_uses_azure_provider(monkeypatch: pytest.Mon
     assert kwargs["api_base"] == "https://example.openai.azure.com"
 
 
-def test_review_engine_sets_o_series_temperature(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_review_engine_sets_o_series_temperature(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = _load_sample_config(tmp_path)
     config.review.auto_reviewer_model = "o3-mini"
     config.review.auto_reviewer_provider = None
 
     captured: Dict[str, Any] = {}
 
-    def _fake_completion(*args: Any, temperature: float, **kwargs: Any) -> Dict[str, Any]:
+    def _fake_completion(
+        *args: Any, temperature: float, **kwargs: Any
+    ) -> Dict[str, Any]:
         captured["temperature"] = temperature
         return {
             "choices": [
@@ -237,3 +255,100 @@ def test_review_engine_sets_o_series_temperature(monkeypatch: pytest.MonkeyPatch
     engine.perform_review(request, result)
 
     assert captured.get("temperature") == pytest.approx(1.0)
+
+
+def test_perform_review_skips_when_disabled(tmp_path: Path) -> None:
+    config = _load_sample_config(tmp_path)
+    config.review.enabled = False
+    engine = ReviewEngine(config)
+
+    review = engine.perform_review(
+        TaskRequest(workflow="fast", prompt="demo"),
+        TaskResult(workflow="fast", content="ok", latency_seconds=0.1),
+    )
+
+    assert review.verdict == "skipped"
+    assert review.auto_verdict is None
+    assert review.quality_score is None
+
+
+def test_perform_review_applies_human_failure_feedback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _load_sample_config(tmp_path)
+    engine = ReviewEngine(config)
+    monkeypatch.setattr(engine, "_run_automated_review", lambda *_: None)
+
+    review = engine.perform_review(
+        TaskRequest(workflow="fast", prompt="demo"),
+        TaskResult(workflow="fast", content="ok", latency_seconds=0.1),
+        human_feedback="reject: missing constraint",
+    )
+
+    assert review.verdict == "fail-human"
+    assert review.notes is not None
+    assert "Human feedback" in review.notes
+
+
+def test_automated_review_without_model_returns_none(tmp_path: Path) -> None:
+    config = _load_sample_config(tmp_path)
+    config.review.auto_reviewer_model = None
+    engine = ReviewEngine(config)
+
+    review = engine._run_automated_review(
+        TaskRequest(workflow="fast", prompt="demo"),
+        TaskResult(workflow="fast", content="ok", latency_seconds=0.1),
+    )
+
+    assert review is None
+
+
+def test_automated_review_requires_litellm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _load_sample_config(tmp_path)
+    config.review.auto_reviewer_model = "review-model"
+    engine = ReviewEngine(config)
+    monkeypatch.setattr("core.review.litellm", None)
+
+    with pytest.raises(ReviewError, match="liteLLM is required"):
+        engine._run_automated_review(
+            TaskRequest(workflow="fast", prompt="demo"),
+            TaskResult(workflow="fast", content="ok", latency_seconds=0.1),
+        )
+
+
+def test_automated_review_timeout_returns_timeout_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _load_sample_config(tmp_path)
+    config.review.auto_reviewer_model = "review-model"
+    config.review.auto_reviewer_provider = "ollama"
+
+    class DummyTimeout(Exception):
+        """Placeholder timeout exception."""
+
+    def _completion(**_: object) -> dict[str, object]:
+        raise DummyTimeout("slow")
+
+    dummy_litellm = SimpleNamespace(completion=_completion, Timeout=DummyTimeout)
+    monkeypatch.setattr("core.review.litellm", dummy_litellm)
+
+    engine = ReviewEngine(config)
+    automated = engine._run_automated_review(
+        TaskRequest(workflow="fast", prompt="demo"),
+        TaskResult(workflow="fast", content="ok", latency_seconds=0.1),
+    )
+
+    assert automated is not None
+    assert automated.verdict == "timeout"
+    assert automated.suggestions == ["Automated review timed out."]
+
+
+def test_review_helpers_normalise_values() -> None:
+    assert ReviewEngine._normalise_verdict("approve") == "pass"
+    assert ReviewEngine._normalise_verdict("reject") == "fail-auto"
+    assert ReviewEngine._normalise_verdict("needs-work") == "needs-work"
+    assert ReviewEngine._resolve_temperature("azure/gpt-4.1") == pytest.approx(0.0)
+    assert ReviewEngine._extract_float("score: 0.82 / 1") == pytest.approx(0.82)
+    assert ReviewEngine._normalise_bullet("1) Fix issue") == "Fix issue"

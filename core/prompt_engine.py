@@ -83,7 +83,9 @@ class AdaptivePromptEngine:
     def _format_memory_section(title: str, payload: Dict[str, object]) -> str:
         if not payload:
             return ""
-        formatted_items = "\n".join(f"- {key}: {value}" for key, value in payload.items())
+        formatted_items = "\n".join(
+            f"- {key}: {value}" for key, value in payload.items()
+        )
         return dedent(
             f"""
             ### {title}
@@ -92,13 +94,12 @@ class AdaptivePromptEngine:
         ).strip()
 
     @staticmethod
-    def _format_list_section(
-        title: str, items: Sequence[Dict[str, object]]
-    ) -> str:
+    def _format_list_section(title: str, items: Sequence[Dict[str, object]]) -> str:
         if not items:
             return ""
         formatted_items = "\n".join(
-            f"- {item.get('id', 'unknown')}: {item.get('content', item)}" for item in items
+            f"- {item.get('id', 'unknown')}: {item.get('content', item)}"
+            for item in items
         )
         return dedent(
             f"""
@@ -109,7 +110,7 @@ class AdaptivePromptEngine:
 
     @staticmethod
     def _format_semantic_relations(
-        relations: Dict[str, List[Dict[str, object]]]
+        relations: Dict[str, List[Dict[str, object]]],
     ) -> str:
         if not relations:
             return ""

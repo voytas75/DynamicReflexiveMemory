@@ -1,4 +1,8 @@
-"""Tests for revision logging behaviour in the memory manager."""
+"""Tests for revision logging and mitigation behaviour in the memory manager.
+
+Updates:
+    v0.1 - 2026-05-11 - Added mitigation, analytics hydration, and metric snapshot coverage.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +12,10 @@ from pathlib import Path
 import pytest
 
 from config.settings import load_app_config
+from core.exceptions import MemoryError
 from core.memory_manager import MemoryManager
 from models.memory import (
+    DriftAnalyticsRecord,
     EpisodicMemoryEntry,
     ReviewRecord,
     SemanticNode,
@@ -144,3 +150,142 @@ def test_query_layer_prefers_relevant_results(
     assert results
     top_hit = results[0]
     assert top_hit.get("id") == "episode-mitigation"
+
+
+def test_memory_mitigation_prunes_and_decays(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    monkeypatch.setattr("core.memory_manager.chromadb_module", None)
+    monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
+
+    manager = MemoryManager(load_app_config())
+    for index in range(3):
+        manager.put_working_item(
+            WorkingMemoryItem(
+                key=f"task:{index}",
+                payload={"index": index},
+                ttl_seconds=10,
+            )
+        )
+
+    manager.record_semantic(
+        SemanticNode(
+            id="node-a",
+            label="A",
+            definition="First node",
+            relations={"node:node-b": 0.8, "external": 0.5},
+        )
+    )
+    manager.record_semantic(
+        SemanticNode(
+            id="node-b",
+            label="B",
+            definition="Second node",
+            relations={"node:node-a": 0.02},
+        )
+    )
+
+    summary = manager.apply_drift_mitigation(
+        task_id="task:test",
+        max_working_items=1,
+        relation_decay=0.5,
+    )
+
+    assert summary["working_pruned"] == 2
+    assert summary["semantic_nodes_updated"] == 2
+    assert len(manager.list_working_items()) == 1
+    node_a = manager.get_semantic_node("node-a")
+    assert node_a is not None
+    assert node_a.relations["node:node-b"] == pytest.approx(0.4)
+    node_b = manager.get_semantic_node("node-b")
+    assert node_b is not None
+    assert "node:node-a" not in node_b.relations
+
+
+def test_memory_manager_validates_layers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    monkeypatch.setattr("core.memory_manager.chromadb_module", None)
+    monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
+
+    manager = MemoryManager(load_app_config())
+
+    with pytest.raises(MemoryError, match="Unsupported memory layer"):
+        manager.list_layer("unknown")
+    with pytest.raises(MemoryError, match="Unsupported memory layer"):
+        manager.query_layer("unknown", "query")
+    with pytest.raises(MemoryError, match="Unsupported revision replay layer"):
+        manager.replay_revision_state("unknown")
+
+
+def test_drift_analytics_hydration_and_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    monkeypatch.setattr("core.memory_manager.chromadb_module", None)
+    monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
+
+    manager = MemoryManager(load_app_config())
+    manager.put_working_item(
+        WorkingMemoryItem(
+            key="task:test:drift",
+            payload={"advisory": "slow"},
+            ttl_seconds=10,
+        )
+    )
+    manager.record_drift_analytics(
+        DriftAnalyticsRecord(
+            id="analytics-test",
+            task_reference="task:test",
+            workflow="fast",
+            latency_seconds=1.25,
+            verdict="pass",
+            slo_breaches=("latency",),
+            drift_advisory="slow",
+            workflow_biases={"fast": 0.1},
+            mitigation_plan={"working_pruned": 1},
+        )
+    )
+
+    records = manager.list_drift_analytics()
+    assert records[-1].id == "analytics-test"
+    assert records[-1].slo_breaches == ("latency",)
+
+    metrics = manager.snapshot_metrics()
+    assert metrics["working_items"] == 1
+    assert metrics["drift_advisories"] == 1
+    assert metrics["analytics_records"] == 1
+
+
+def test_semantic_linking_and_neighbors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    monkeypatch.setattr("core.memory_manager.chromadb_module", None)
+    monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
+
+    manager = MemoryManager(load_app_config())
+    manager.record_semantic(
+        SemanticNode(id="source", label="Source", definition="Source node")
+    )
+    manager.record_semantic(
+        SemanticNode(id="target", label="Target", definition="Target node")
+    )
+
+    manager.link_semantic_nodes("source", "target", weight=2.0)
+    neighbours = manager.get_semantic_neighbors("source")
+
+    assert neighbours
+    assert neighbours[0][0].id == "target"
+    assert neighbours[0][1] == pytest.approx(1.0)
+    assert manager.get_semantic_neighbors("missing") == []

@@ -56,7 +56,9 @@ class TelemetryFeed:
                 break
         return drained
 
-    def latest(self, name: Optional[str] = None, limit: int = 10) -> List[TelemetryEvent]:
+    def latest(
+        self, name: Optional[str] = None, limit: int = 10
+    ) -> List[TelemetryEvent]:
         with self._lock:
             if name is None:
                 events = list(self._history)
