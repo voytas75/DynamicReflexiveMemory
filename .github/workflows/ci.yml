@@ -23,7 +23,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run pytest
-        run: pytest --cov --cov-fail-under=85 --disable-warnings -q
+        run: pytest --cov --cov-report=term-missing --cov-fail-under=85 --disable-warnings -q
 
       - name: Run mypy
         run: mypy .
