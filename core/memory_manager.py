@@ -65,9 +65,9 @@ except ImportError:  # pragma: no cover - handled gracefully
 try:  # pragma: no cover - optional dependency
     from openai import AzureOpenAI as _AzureOpenAI
 except ImportError:  # pragma: no cover
-    _AzureOpenAI = None
-
-AzureOpenAI = cast(Any, _AzureOpenAI)
+    AzureOpenAI = cast(Any, None)
+else:
+    AzureOpenAI = cast(Any, _AzureOpenAI)
 
 LOGGER = logging.getLogger("drm.memory")
 

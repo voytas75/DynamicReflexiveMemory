@@ -31,7 +31,7 @@ from models.workflows import TaskRequest, TaskResult, WorkflowSelection
 try:  # pragma: no cover - optional dependency
     import litellm as _litellm
 except ImportError:  # pragma: no cover
-    _litellm = None
+    _litellm = cast(Any, None)
 
 litellm = cast(Any, _litellm)
 

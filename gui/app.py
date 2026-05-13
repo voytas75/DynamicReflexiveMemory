@@ -214,11 +214,23 @@ else:  # pragma: no cover - runtime optional dependency
 
         class QMessageBox:
             @staticmethod
-            def information(*_: Any, **__: Any) -> None:
+            def information(
+                _parent: Any,
+                _title: str,
+                _text: str,
+                *_: Any,
+                **__: Any,
+            ) -> None:
                 pass
 
             @staticmethod
-            def warning(*_: Any, **__: Any) -> None:
+            def warning(
+                _parent: Any,
+                _title: str,
+                _text: str,
+                *_: Any,
+                **__: Any,
+            ) -> None:
                 pass
 
             @staticmethod
@@ -458,7 +470,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
     def _handle_run_task(self) -> None:
         """Execute a task using the live loop and render the outcome."""
         if self._worker_thread and self._worker_thread.isRunning():
-            QMessageBox.information(
+            cast(
+                Any,
+                QMessageBox.information,
+            )(
                 self,
                 "Task Running",
                 "A task is already running. Please wait for it to complete.",
@@ -509,7 +524,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
                 self._build_mitigation_label("Manual", summary)
             )
             actions = self._summarise_actions(summary)
-            QMessageBox.information(
+            cast(
+                Any,
+                QMessageBox.information,
+            )(
                 self,
                 "Mitigation Applied",
                 f"Mitigation actions executed: {actions}",
@@ -517,7 +535,10 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
             self._refresh_memory_snapshot()
         else:
             self._mitigation_label.setText("No mitigation actions recorded.")
-            QMessageBox.information(
+            cast(
+                Any,
+                QMessageBox.information,
+            )(
                 self,
                 "Mitigation Applied",
                 "No mitigation changes were required.",
