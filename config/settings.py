@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from core.exceptions import ConfigError
 
 CONFIG_FILE = Path(__file__).with_name("config.json")
+EXAMPLE_CONFIG_FILE = Path(__file__).with_name("config.example.json")
 
 
 class WorkflowModelConfig(BaseModel):
@@ -129,7 +130,13 @@ class AppConfig(BaseModel):
 
 def resolve_config_path(path: Optional[Path] = None) -> Path:
     """Resolve the configuration path, defaulting to the packaged config file."""
-    resolved = path or CONFIG_FILE
+    if path is not None:
+        resolved = path
+    elif CONFIG_FILE.exists():
+        resolved = CONFIG_FILE
+    else:
+        resolved = EXAMPLE_CONFIG_FILE
+
     if not resolved.exists():
         raise ConfigError(f"Configuration file not found at {resolved}")
     return resolved

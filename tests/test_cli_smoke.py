@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from config.settings import load_app_config
+from config.settings import load_app_config, resolve_config_path
 from core.user_settings import UserSettingsManager
 from main import run_cli
 from models.memory import ReviewRecord
@@ -62,7 +62,7 @@ def test_run_cli_emits_feedback(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr("main.LiveTaskLoop", _StubLoop)
-    config = load_app_config()
+    config = load_app_config(resolve_config_path(Path("config/config.example.json")))
 
     caplog.set_level(logging.INFO, logger="drm.cli")
 
@@ -77,7 +77,7 @@ def test_run_cli_prefers_saved_workflow(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr("main.LiveTaskLoop", _StubLoop)
-    config = load_app_config()
+    config = load_app_config(resolve_config_path(Path("config/config.example.json")))
 
     settings_path = tmp_path / "settings.json"
     user_settings = UserSettingsManager(settings_path)

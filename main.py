@@ -24,7 +24,6 @@ from core.exceptions import DRMError, HealthCheckError, WorkflowError
 from core.health import run_startup_checks
 from core.live_loop import LiveTaskLoop
 from core.user_settings import UserSettingsManager
-from gui.app import launch_gui
 
 
 def setup_logging(logging_config: Optional[Path] = None) -> None:
@@ -135,6 +134,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     if args.mode == "gui":
+        from gui.app import launch_gui
+
         gui_result = launch_gui(
             config,
             user_settings=user_settings,
