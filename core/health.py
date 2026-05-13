@@ -17,7 +17,6 @@ from typing import Any, List, cast
 from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import HealthCheckError
 
-
 LOGGER = logging.getLogger("drm.health")
 
 
