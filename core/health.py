@@ -17,7 +17,6 @@ from typing import Any, List, cast
 from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import HealthCheckError
 
-
 LOGGER = logging.getLogger("drm.health")
 
 
@@ -97,7 +96,7 @@ def _check_litellm() -> List[str]:
     except metadata.PackageNotFoundError:
         return []
 
-    expected = "1.83.0"
+    expected = "1.83.14"
     if installed != expected:
         return [f"litellm version {installed} detected; expected {expected}."]
     return []

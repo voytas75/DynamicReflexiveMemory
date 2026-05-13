@@ -58,26 +58,20 @@ class AdaptivePromptEngine:
             context.task.strip(),
         ]
         if context.drift_indicator:
-            prompt_sections.append(
-                dedent(
-                    f"""
+            prompt_sections.append(dedent(f"""
                     ### Drift Advisory
                     {context.drift_indicator.strip()}
-                    """
-                ).strip()
-            )
+                    """).strip())
         return "\n\n".join(section for section in prompt_sections if section)
 
     def _format_header(self, context: PromptContext) -> str:
         default_workflow = self._config.llm.default_workflow
-        return dedent(
-            f"""
+        return dedent(f"""
             ### DRM Adaptive Prompt
             - Workflow: {context.workflow}
             - Default Workflow: {default_workflow}
             - Memory Units: working={len(context.working_memory)}, episodes={len(context.episodic_memory)}, semantics={len(context.semantic_memory)}
-            """
-        ).strip()
+            """).strip()
 
     @staticmethod
     def _format_memory_section(title: str, payload: Dict[str, object]) -> str:
@@ -86,12 +80,10 @@ class AdaptivePromptEngine:
         formatted_items = "\n".join(
             f"- {key}: {value}" for key, value in payload.items()
         )
-        return dedent(
-            f"""
+        return dedent(f"""
             ### {title}
             {formatted_items}
-            """
-        ).strip()
+            """).strip()
 
     @staticmethod
     def _format_list_section(title: str, items: Sequence[Dict[str, object]]) -> str:
@@ -101,12 +93,10 @@ class AdaptivePromptEngine:
             f"- {item.get('id', 'unknown')}: {item.get('content', item)}"
             for item in items
         )
-        return dedent(
-            f"""
+        return dedent(f"""
             ### {title}
             {formatted_items}
-            """
-        ).strip()
+            """).strip()
 
     @staticmethod
     def _format_semantic_relations(
@@ -134,12 +124,10 @@ class AdaptivePromptEngine:
             return ""
 
         formatted = "\n".join(lines)
-        return dedent(
-            f"""
+        return dedent(f"""
             ### Semantic Relations
             {formatted}
-            """
-        ).strip()
+            """).strip()
 
     @staticmethod
     def _format_reviews(reviews: List[ReviewRecord]) -> str:
@@ -157,9 +145,7 @@ class AdaptivePromptEngine:
                 f"- {record.created_at.isoformat()} | {record.verdict}: {details}"
             )
         formatted = "\n".join(formatted_lines)
-        return dedent(
-            f"""
+        return dedent(f"""
             ### Review Feedback
             {formatted}
-            """
-        ).strip()
+            """).strip()
