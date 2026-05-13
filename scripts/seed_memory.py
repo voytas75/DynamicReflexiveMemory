@@ -25,7 +25,6 @@ from models.memory import (
     WorkingMemoryItem,
 )
 
-
 LOGGER = logging.getLogger("drm.seed")
 
 

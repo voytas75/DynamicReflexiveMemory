@@ -8,7 +8,9 @@ from config import settings
 
 
 def test_save_app_config_roundtrip(tmp_path: Path) -> None:
-    source_path = Path(__file__).resolve().parent.parent / "config" / "config.example.json"
+    source_path = (
+        Path(__file__).resolve().parent.parent / "config" / "config.example.json"
+    )
     config = settings.load_app_config(source_path)
 
     config.llm.enable_debug = True
