@@ -97,7 +97,7 @@ def _check_litellm() -> List[str]:
     except metadata.PackageNotFoundError:
         return []
 
-    expected = "1.83.0"
+    expected = "1.83.14"
     if installed != expected:
         return [f"litellm version {installed} detected; expected {expected}."]
     return []
