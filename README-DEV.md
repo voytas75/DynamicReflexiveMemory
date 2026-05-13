@@ -5,6 +5,7 @@
 - Data layer combines Redis (working memory), ChromaDB (episodic/semantic stores), and persisted review cycles handed off to the GUI telemetry panels.
 - Strict typing enforced through Pydantic models, dataclasses, and mypy strict mode for core modules.
 - Local runtime first; external providers are optional and configured through environment variables or `config/config.json`.
+- `uv` is supported for environment creation, installs, and command execution; plain `pip`/`venv` remains valid.
 
 ## Environment & Tooling
 - Target interpreter: **Python 3.12**; create a dedicated virtual environment per workspace.
@@ -14,6 +15,12 @@
 
 ## Detailed Getting Started
 1. **Create and activate the virtual environment**
+   ```bash
+   uv venv
+   source .venv/bin/activate
+   uv pip install -e ".[dev]"
+   ```
+   Fallback without `uv`:
    ```bash
    python -m venv .venv
    source .venv/bin/activate
@@ -29,10 +36,10 @@
 3. **Run DRM**
    ```bash
    # GUI
-   python main.py --mode gui
+   uv run python main.py --mode gui
 
    # CLI/task runner
-   python main.py --mode cli --task "Draft integration plan" --feedback "Looks good"
+   uv run python main.py --mode cli --task "Draft integration plan" --feedback "Looks good"
    ```
 
 ## Configuration & Secrets
@@ -55,11 +62,12 @@
 ## Testing & Quality Gates
 - Install dev requirements and run the full gate before merging:
   ```bash
-  pytest --cov --cov-fail-under=85 --disable-warnings -q
-  mypy .
-  ruff check .
-  black --check .
+  uv run pytest --cov --cov-fail-under=85 --disable-warnings -q
+  uv run mypy .
+  uv run ruff check .
+  uv run black --check .
   ```
+- Without `uv`, run the same commands directly from the activated virtualenv.
 - Favor `hypothesis` strategies for boundary inputs (long prompts, Unicode edge cases, malformed JSON payloads).
 - Mock outbound HTTP/database calls with `pytest-mock`, `vcrpy`, or async test clients to keep suites deterministic.
 - Keep coverage ≥85% on core logic modules; justify exceptions in PR descriptions if temporary.
@@ -73,6 +81,7 @@
 ## CI & Automation
 - GitHub Actions workflow `.github/workflows/ci.yml` installs `.[dev]` and runs pytest coverage, mypy, Ruff, and Black checks on each push/PR.
 - Runtime dependencies are pinned in both `pyproject.toml` and `requirements.txt`; audit transitive dependencies regularly.
+- Local CI-like verification can be run through `uv run` after `uv pip install -e ".[dev]"`.
 
 ## Utilities
 - **Memory Seeding**: run `python scripts/seed_memory.py` to populate demo working/episodic/semantic/review entries for GUI demos.
