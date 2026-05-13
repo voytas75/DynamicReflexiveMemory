@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/) and dates use ISO-8601 (`YYYY-MM-DD`).
 
+## [Unreleased]
+
+### Changed
+- Documented and enabled `uv`-based local setup/workflow commands in README files and CI dependency installation.
+
 ## [0.1.9] - 2026-05-11
 
 ### Added
