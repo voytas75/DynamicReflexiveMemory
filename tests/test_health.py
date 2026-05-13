@@ -17,7 +17,7 @@ from core.health import run_startup_checks
 
 
 def _load_config(tmp_path: Path) -> settings.AppConfig:
-    source = Path(__file__).resolve().parent.parent / "config" / "config.json"
+    source = Path(__file__).resolve().parent.parent / "config" / "config.example.json"
     config_path = tmp_path / "config.json"
     config_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     return settings.load_app_config(config_path)
