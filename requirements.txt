@@ -1,5 +1,5 @@
 chromadb==0.5.3
-litellm==1.83.14
+litellm==1.84.0
 pydantic==2.12.5
 python-dotenv==1.2.2
 PySide6==6.8.2
