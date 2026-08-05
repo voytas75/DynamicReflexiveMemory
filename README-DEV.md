@@ -88,6 +88,7 @@
 
 ## CI & Automation
 - GitHub Actions workflow `.github/workflows/ci.yml` runs `uv sync --all-extras --frozen` and then Ruff plus strict Pyright on each push/PR.
+- `.github/workflows/codeql.yml` analyzes Python on pushes and pull requests; it is initially observational rather than a required merge check.
 - Runtime dependencies are pinned in both `pyproject.toml` and `requirements.txt`; audit transitive dependencies regularly.
 - Local CI-like verification can be run through `uv run --all-extras --frozen` after a frozen sync.
 

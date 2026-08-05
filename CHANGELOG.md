@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Changed
+- Added an observational CodeQL workflow for Python source scanning on pushes and pull requests.
 - Added isolated real Redis and ChromaDB acceptance coverage: Redis receives a dynamic loopback port and ChromaDB persists through a temporary local directory with a deterministic embedding function.
 - Bound retrieved-memory prompt context to 6,000 characters and label it as untrusted reference data; the direct task instruction remains separate.
 - Malformed, missing, or unavailable automated-review verdicts now produce `unverified` instead of a passing review; disabled review remains explicitly `skipped`.
