@@ -33,17 +33,19 @@ class _StubLoop:
         human_feedback: str | None = None,
     ) -> TaskRunOutcome:
         assert task == "demo"
-        assert human_feedback == "note"
+        assert human_feedback in {"note", "sensitive-human-feedback"}
         self.last_override = workflow_override
         selection = WorkflowSelection(workflow="fast", rationale="stub", score=1.0)
-        request = TaskRequest(workflow="fast", prompt=task)
-        result = TaskResult(workflow="fast", content="ok", latency_seconds=0.1)
+        request = TaskRequest(workflow="fast", prompt="sensitive-compiled-prompt")
+        result = TaskResult(
+            workflow="fast", content="sensitive-task-result", latency_seconds=0.1
+        )
         review = ReviewRecord(
             id="review",
             task_reference=request.task_id,
             verdict="pass",
-            notes="stub",
-            suggestions=["none"],
+            notes="sensitive-review-notes",
+            suggestions=["sensitive-review-suggestion"],
             quality_score=0.9,
             auto_verdict="pass",
         )
@@ -66,10 +68,23 @@ def test_run_cli_emits_feedback(
 
     caplog.set_level(logging.INFO, logger="drm.cli")
 
-    run_cli(config, task="demo", workflow=None, human_feedback="note")
+    run_cli(
+        config,
+        task="demo",
+        workflow=None,
+        human_feedback="sensitive-human-feedback",
+    )
 
-    assert "Human feedback applied" in caplog.text
+    assert "Human feedback recorded" in caplog.text
     assert "Mitigation actions" in caplog.text
+    for secret in (
+        "sensitive-compiled-prompt",
+        "sensitive-task-result",
+        "sensitive-review-notes",
+        "sensitive-review-suggestion",
+        "sensitive-human-feedback",
+    ):
+        assert secret not in caplog.text
 
 
 def test_run_cli_prefers_saved_workflow(

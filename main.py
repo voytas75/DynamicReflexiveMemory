@@ -61,40 +61,35 @@ def run_cli(
     except DRMError as exc:
         if isinstance(exc, WorkflowError):
             logger.warning(
-                "Workflow execution unavailable: %s. The prompt can be sent manually.",
-                exc,
+                "Workflow execution unavailable; no task result was produced."
             )
         else:
-            logger.error("Task execution failed: %s", exc)
+            logger.error("Task execution failed; no task result was produced.")
         return
 
     logger.info(
-        "Executed workflow '%s' (reason: %s, score=%.2f)",
+        "Executed workflow '%s' (score=%.2f)",
         outcome.selection.workflow,
-        outcome.selection.rationale,
         outcome.selection.score,
     )
-    logger.info("Compiled prompt:\n%s", outcome.request.prompt)
-    logger.info("Task result (%s): %s", outcome.result.workflow, outcome.result.content)
+    logger.info("Compiled prompt omitted from console logs.")
     logger.info(
-        "Review verdict: %s (auto=%s, quality=%s)",
-        outcome.review.verdict,
-        outcome.review.auto_verdict,
-        (
-            f"{outcome.review.quality_score:.2f}"
-            if outcome.review.quality_score is not None
-            else "n/a"
-        ),
+        "Task result received (workflow=%s, characters=%s); content omitted from console logs.",
+        outcome.result.workflow,
+        len(outcome.result.content),
     )
-    if outcome.review.suggestions:
-        logger.info("Review suggestions: %s", "; ".join(outcome.review.suggestions))
-    logger.info("Review notes: %s", outcome.review.notes)
+    logger.info(
+        "Review completed (quality_score_present=%s, suggestions=%s, notes_present=%s).",
+        outcome.review.quality_score is not None,
+        len(outcome.review.suggestions),
+        bool(outcome.review.notes),
+    )
     if human_feedback:
-        logger.info("Human feedback applied: %s", human_feedback)
+        logger.info("Human feedback recorded.")
     if outcome.drift_advisory:
-        logger.warning("Controller advisory: %s", outcome.drift_advisory)
+        logger.warning("Controller advisory generated.")
     if outcome.mitigation_summary:
-        logger.info("Mitigation actions: %s", outcome.mitigation_summary)
+        logger.info("Mitigation actions recorded.")
 
 
 def main(argv: Optional[list[str]] = None) -> int:

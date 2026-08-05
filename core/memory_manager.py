@@ -72,6 +72,8 @@ else:
 LOGGER = logging.getLogger("drm.memory")
 
 REVISION_LOG_ENV = "DRM_MEMORY_LOG_PATH"
+REVISION_LOG_MODE_ENV = "DRM_MEMORY_AUDIT_LOG_MODE"
+FULL_REVISION_LOG_MODE = "full"
 DEFAULT_REVISION_LOG = PROJECT_ROOT / "data" / "logs" / "memory_revisions.jsonl"
 
 SEMANTIC_NODE_PREFIX = "node:"
@@ -87,6 +89,7 @@ class MemoryRevisionLogger:
         log_path = self._resolve_log_path(path_override)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._path = log_path
+        self._mode = self._resolve_log_mode()
         self._lock = Lock()
         self._revision, self._tail_hash = self._load_log_tail()
 
@@ -95,10 +98,14 @@ class MemoryRevisionLogger:
         with self._lock:
             record: Dict[str, object] = {
                 "layer": layer,
-                "id": identifier,
-                "payload": payload,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
+            if self._mode == FULL_REVISION_LOG_MODE:
+                record["id"] = identifier
+                record["payload"] = payload
+            else:
+                record["id_digest"] = self._digest_value(identifier)
+                record["payload"] = {"redacted": True}
             self._revision += 1
             record["revision"] = self._revision
             record["prev_hash"] = self._tail_hash
@@ -130,7 +137,7 @@ class MemoryRevisionLogger:
             try:
                 history.append(cast(Dict[str, object], json.loads(line)))
             except json.JSONDecodeError:
-                LOGGER.debug("Skipping malformed revision log entry: %s", line)
+                LOGGER.debug("Skipping malformed revision log entry.")
         return history
 
     def verify(self, limit_revision: Optional[int] = None) -> bool:
@@ -154,7 +161,9 @@ class MemoryRevisionLogger:
         for record in self._iter_records(limit_revision):
             if record.get("layer") != layer:
                 continue
-            identifier = str(record.get("id"))
+            identifier = str(record.get("id") or record.get("id_digest") or "")
+            if not identifier:
+                continue
             payload_raw = record.get("payload")
             if isinstance(payload_raw, dict):
                 state[identifier] = payload_raw
@@ -170,6 +179,18 @@ class MemoryRevisionLogger:
                 return candidate
             return candidate / DEFAULT_REVISION_LOG.name
         return DEFAULT_REVISION_LOG
+
+    def _resolve_log_mode(self) -> str:
+        """Return the explicit full-audit opt-in or the safe redacted default."""
+        mode = os.getenv(REVISION_LOG_MODE_ENV, "redacted").strip().lower()
+        if mode in {"", "redacted"}:
+            return "redacted"
+        if mode == FULL_REVISION_LOG_MODE:
+            return FULL_REVISION_LOG_MODE
+        LOGGER.warning(
+            "Unknown %s mode; using redacted audit records.", REVISION_LOG_MODE_ENV
+        )
+        return "redacted"
 
     def _load_log_tail(self) -> Tuple[int, Optional[str]]:
         if not self._path.exists():
@@ -226,6 +247,12 @@ class MemoryRevisionLogger:
         payload = dict(record)
         payload.pop("hash", None)
         canonical = json.dumps(payload, default=str, sort_keys=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _digest_value(value: object) -> str:
+        """Return an opaque stable identifier for redacted audit records."""
+        canonical = json.dumps(value, default=str, sort_keys=True)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

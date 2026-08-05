@@ -66,6 +66,43 @@ def test_memory_revision_log_records_changes(
     assert (tmp_path / "revisions.jsonl").exists()
 
 
+def test_memory_revision_log_redacts_content_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Default audit records must not duplicate memory content in plaintext."""
+
+    log_path = tmp_path / "revisions.jsonl"
+    monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(log_path))
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    monkeypatch.setattr("core.memory_manager.chromadb_module", None)
+    monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
+
+    manager = MemoryManager(load_app_config())
+    manager.record_episodic(
+        EpisodicMemoryEntry(
+            id="episode-sensitive-identifier",
+            content="sensitive-result-content",
+            metadata={"access_token": "sensitive-token-value"},
+        )
+    )
+
+    log_text = log_path.read_text(encoding="utf-8")
+    for secret in (
+        "episode-sensitive-identifier",
+        "sensitive-result-content",
+        "sensitive-token-value",
+    ):
+        assert secret not in log_text
+
+    history = manager.get_revision_history(limit=1)
+    assert history[-1]["payload"] == {"redacted": True}
+    assert "id" not in history[-1]
+    assert isinstance(history[-1].get("id_digest"), str)
+    assert manager.verify_revision_log()
+    assert manager.replay_revision_state("episodic") == [{"redacted": True}]
+
+
 def test_revision_log_verification_and_replay(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -74,6 +111,7 @@ def test_revision_log_verification_and_replay(
 
     log_path = tmp_path / "revisions.jsonl"
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(log_path))
+    monkeypatch.setenv("DRM_MEMORY_AUDIT_LOG_MODE", "full")
     monkeypatch.setattr("core.memory_manager.redis_module", None)
     monkeypatch.setattr("core.memory_manager.chromadb_module", None)
     monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
