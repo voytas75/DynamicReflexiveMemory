@@ -5,6 +5,8 @@ Updates:
         credential prerequisites with informative warnings.
     v0.2 - 2025-11-07 - Treated configured Azure embedding deployments as valid.
     v0.3 - 2026-08-05 - Simplified LiteLLM package availability typing.
+    v0.4 - 2026-08-05 - Derived the expected LiteLLM version from installed
+        package dependency metadata instead of a stale local literal.
 """
 
 from __future__ import annotations
@@ -13,12 +15,13 @@ import logging
 import os
 from importlib import metadata
 from pathlib import Path
-from typing import Any, List, cast
+from typing import Any, List, Optional, cast
 
 from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import HealthCheckError
 
 LOGGER = logging.getLogger("drm.health")
+PACKAGE_NAME = "dynamic-reflexive-memory"
 
 
 def run_startup_checks(config: AppConfig) -> List[str]:
@@ -92,10 +95,31 @@ def _check_litellm() -> List[str]:
             "litellm is required for workflow execution but is missing."
         )
 
-    expected = "1.83.14"
+    expected = _expected_litellm_version()
+    if expected is None:
+        return [
+            "litellm dependency specification unavailable; cannot verify installed version."
+        ]
     if installed != expected:
         return [f"litellm version {installed} detected; expected {expected}."]
     return []
+
+
+def _expected_litellm_version() -> Optional[str]:
+    """Read the exact LiteLLM pin from installed DRM package metadata."""
+    try:
+        requirements = metadata.requires(PACKAGE_NAME) or []
+    except metadata.PackageNotFoundError:
+        return None
+
+    for requirement in requirements:
+        name, separator, version = requirement.partition("==")
+        if name.strip().lower() != "litellm" or not separator:
+            continue
+        expected = version.partition(";")[0].strip()
+        if expected:
+            return expected
+    return None
 
 
 def _check_credentials(config: AppConfig) -> List[str]:
