@@ -59,6 +59,7 @@ examples/
 *.lock
 AGENTS.md
 drmblueprint.md
+!uv.lock
 .coverage
 .mypy_cache/
 .nox/
