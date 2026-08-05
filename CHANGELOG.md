@@ -9,6 +9,7 @@ The package version source of truth is `[project].version` in `pyproject.toml` (
 ## [Unreleased]
 
 ### Changed
+- GUI now surfaces `partial` persistence outcomes in its status and Recent Outputs views using only safe failed-boundary labels; Qt fallback and real offscreen initialisation are covered by local regression tests.
 - Task runs now surface incomplete persistence as a `partial` outcome with CLI exit code `2`; primary persistence failure skips automatic drift mitigation and reports only failed storage boundaries for remediation/retry.
 - Added an observational CodeQL workflow for Python source scanning on pushes and pull requests.
 - Added isolated real Redis and ChromaDB acceptance coverage: Redis receives a dynamic loopback port and ChromaDB persists through a temporary local directory with a deterministic embedding function.

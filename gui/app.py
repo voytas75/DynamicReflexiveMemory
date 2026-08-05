@@ -13,6 +13,8 @@ Updates:
     v0.10 - 2025-11-08 - Wired telemetry-driven metrics, drift advisories, and review panes.
     v0.11 - 2025-11-08 - Visualised drift analytics trends with persistent telemetry data.
     v0.12 - 2026-05-11 - Hardened fallback Qt stubs and numeric telemetry coercion for strict mypy.
+    v0.13 - 2026-08-05 - Surface partial persistence outcomes and verify
+        real Qt offscreen initialisation.
 """
 
 from __future__ import annotations
@@ -283,6 +285,17 @@ def _probe_qt_initialisation() -> tuple[bool, Optional[str]]:
     return True, None
 
 
+def _format_task_completion_status(outcome: TaskRunOutcome) -> str:
+    """Render a safe, actionable status for a completed task."""
+    if outcome.persistence_status == "partial":
+        failures = ", ".join(outcome.persistence_failures) or "unknown"
+        return (
+            "Task completed with partial persistence. Remediate storage and retry "
+            f"(failed boundaries: {failures})."
+        )
+    return "Task completed."
+
+
 def _coerce_optional_float(value: object) -> Optional[float]:
     """Convert scalar JSON values to float when possible."""
     if isinstance(value, (str, int, float)):
@@ -547,16 +560,17 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
     def _on_task_finished(self, outcome: object) -> None:
         """Handle successful task completion."""
         self._set_interaction_enabled(True)
-        self._status_label.setText("Task completed.")
         self._task_input.clear()
         self._feedback_input.clear()
         self._worker_thread = None
         self._current_worker = None
 
         if not isinstance(outcome, TaskRunOutcome):
+            self._status_label.setText("Task finished with an unexpected result.")
             LOGGER.warning("Received unexpected outcome type: %s", type(outcome))
             return
 
+        self._status_label.setText(_format_task_completion_status(outcome))
         self._recent_outcomes.append(outcome)
         self._recent_outcomes = self._recent_outcomes[-5:]
         self._render_recent_outputs()
@@ -726,11 +740,13 @@ class DRMWindow(QWidget):  # pragma: no cover - requires GUI runtime
                 else "n/a"
             )
             suggestions = "; ".join(outcome.review.suggestions) or "None"
+            persistence_failures = ", ".join(outcome.persistence_failures) or "None"
             lines.append(
                 (
                     f"[{outcome.request.created_at.isoformat()}] "
                     f"{outcome.selection.workflow} ({outcome.selection.rationale}, score={outcome.selection.score:.2f})\n"
                     f"Latency: {outcome.result.latency_seconds:.2f}s | Drift: {outcome.drift_advisory or 'None'}\n"
+                    f"Persistence: {outcome.persistence_status} | Failed boundaries: {persistence_failures}\n"
                     f"Mitigation: {self._summarise_actions(outcome.mitigation_summary) if outcome.mitigation_summary else 'None'}\n"
                     f"Output:\n{outcome.result.content}\n"
                     f"Review: verdict={outcome.review.verdict}, auto={outcome.review.auto_verdict}, "

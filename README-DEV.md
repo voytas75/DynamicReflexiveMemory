@@ -103,8 +103,9 @@
 
 ## GUI Overview
 - Workflow selector + task input wires into LiveTaskLoop executions without leaving the GUI.
-- Background threads keep the UI responsive; status widgets stream live updates.
+- Background threads keep the UI responsive; status widgets stream live updates. A `partial` persistence outcome identifies only failed storage boundaries and instructs the operator to remediate storage and retry.
 - Panels expose working/episodic/semantic/review slices, drift advisories, telemetry charts, and review history.
+- Qt availability is guarded by an in-process display check plus a subprocess probe; the local regression suite verifies real `QT_QPA_PLATFORM=offscreen` initialisation and the no-PySide fallback without requiring `pytest-qt`.
 - Settings editor inside the GUI allows on-the-fly config adjustments that persist across sessions (window size, workflow preference, etc.).
 
 ## Roadmap
