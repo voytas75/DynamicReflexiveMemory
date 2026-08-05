@@ -51,7 +51,7 @@
 
 ## Configuration & Secrets
 - Copy `config/config.example.json` to `config/config.json` and update provider credentials before first run.
-- `config/config.json` holds workflow routing, model identifiers, and storage paths; keep values explicit to honor KISS/DRY.
+- `config/config.json` holds workflow routing, model identifiers, and storage paths; task execution and automated review share Azure/Ollama LiteLLM routing, including `OLLAMA_BASE_URL` override and WSL2 host detection.
 - `config/logging.conf` defines structured log routing (telemetry, spans, metrics). Extend handlers here instead of in code.
 - Environment variables load through `.env` (managed by `python-dotenv`). Never commit `.env` files.
 - Missing or invalid credentials raise descriptive `WorkflowError` exceptions with contextual hints; propagate new errors through custom exception types.

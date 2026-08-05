@@ -204,6 +204,25 @@ def test_resolve_model_configuration_uses_azure_provider(
     assert kwargs["api_base"] == "https://example.openai.azure.com"
 
 
+def test_resolve_model_configuration_uses_ollama_task_routing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _load_sample_config(tmp_path)
+    config.review.auto_reviewer_model = "gemma3:1b"
+    config.review.auto_reviewer_provider = "ollama"
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://172.16.0.1:11434/")
+
+    model_name, kwargs = ReviewEngine(config)._resolve_model_configuration()
+
+    assert model_name == "ollama/gemma3:1b"
+    assert kwargs == {
+        "base_url": "http://172.16.0.1:11434",
+        "api_base": "http://172.16.0.1:11434",
+        "custom_llm_provider": "ollama",
+    }
+
+
 def test_review_engine_sets_o_series_temperature(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

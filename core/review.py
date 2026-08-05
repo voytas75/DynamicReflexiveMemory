@@ -12,6 +12,8 @@ Updates:
     v0.9 - 2026-08-05 - Narrowed JSON-safe mapping and sequence traversal for strict Pyright.
     v1.0 - 2026-08-05 - Redacted provider failure details from default logs and
         review exceptions.
+    v1.1 - 2026-08-05 - Delegated Azure/Ollama routing to the shared provider
+        routing seam.
 """
 
 from __future__ import annotations
@@ -21,11 +23,11 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from os import getenv
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from config.settings import AppConfig
 from core.exceptions import ReviewError
+from core.provider_routing import ProviderRoutingError, resolve_provider_configuration
 from models.memory import ReviewRecord
 from models.workflows import TaskRequest, TaskResult
 
@@ -272,31 +274,10 @@ class ReviewEngine:
         if not provider:
             return model_name, {}
 
-        provider_lower = provider.lower()
-        if provider_lower == "azure":
-            api_key = getenv("AZURE_OPENAI_API_KEY")
-            endpoint = getenv("AZURE_OPENAI_ENDPOINT")
-            api_version = getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
-            if not api_key or not endpoint:
-                raise ReviewError(
-                    "Azure OpenAI credentials missing for automated review."
-                )
-            base = endpoint.rstrip("/")
-            if not model_name.startswith("azure/"):
-                model_name = f"azure/{model_name}"
-            return model_name, {
-                "api_key": api_key,
-                "api_base": base,
-                "base_url": base,
-                "api_version": api_version,
-                "custom_llm_provider": "azure",
-            }
-
-        if provider_lower == "ollama":
-            base_url = getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            return model_name, {"base_url": base_url.rstrip("/")}
-
-        return model_name, {}
+        try:
+            return resolve_provider_configuration(provider, model_name)
+        except ProviderRoutingError as exc:
+            raise ReviewError(str(exc)) from None
 
     def _parse_automated_review(self, content: str) -> "AutomatedReview":
         lines = [line.rstrip() for line in content.splitlines()]
