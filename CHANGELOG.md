@@ -9,6 +9,8 @@ The package version source of truth is `[project].version` in `pyproject.toml` (
 ## [Unreleased]
 
 ### Changed
+- Semantic-node reads that fail after task-result persistence now report the safe `semantic:summary` boundary as a `partial` outcome, so controller and automatic mitigation remain skipped instead of surfacing a workflow failure.
+- Provider-backed acceptance, WebSocket/dashboard exposure, and CLI/webhook exports are explicitly documented as deferred outside the current local-first baseline.
 - Default Azure embedding and Chroma storage failure logs/errors now retain only safe stage/layer and exception-class labels; raw provider/storage errors and exception chains no longer enter default logs or `MemoryError` messages.
 - Task execution and automated review now share Azure/Ollama LiteLLM routing, including normalized provider model identifiers, kwargs, `OLLAMA_BASE_URL` override, and WSL-aware Ollama endpoint resolution.
 - Startup health now reads the exact LiteLLM pin from installed DRM package dependency metadata, eliminating the stale local `1.83.14` expectation while retaining warnings for a genuine version mismatch or unavailable metadata.
