@@ -8,6 +8,7 @@ Updates:
     v0.5 - 2025-11-07 - Captured optional human review feedback in CLI workflows.
     v0.6 - 2025-11-07 - Persisted workflow preference and window state between sessions.
     v0.7 - 2026-08-05 - Added explicit CLI result output and non-zero workflow failure status.
+    v0.8 - 2026-08-05 - Return exit code 2 for partial persistence outcomes.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ from core.exceptions import DRMError, HealthCheckError, WorkflowError
 from core.health import run_startup_checks
 from core.live_loop import LiveTaskLoop
 from core.user_settings import UserSettingsManager
+
+PARTIAL_PERSISTENCE_EXIT_CODE = 2
 
 
 def setup_logging(logging_config: Optional[Path] = None) -> None:
@@ -104,8 +107,16 @@ def run_cli(
         logger.warning("Controller advisory generated.")
     if outcome.mitigation_summary:
         logger.info("Mitigation actions recorded.")
+    if outcome.persistence_status == "partial":
+        logger.warning(
+            "Task completed with partial persistence; remediate storage and retry "
+            "(failed boundaries=%s).",
+            ",".join(outcome.persistence_failures),
+        )
     if show_result:
         print(outcome.result.content)
+    if outcome.persistence_status == "partial":
+        return PARTIAL_PERSISTENCE_EXIT_CODE
     return 0
 
 

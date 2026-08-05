@@ -60,6 +60,26 @@ class _StubLoop:
         )
 
 
+class _PartialPersistenceLoop(_StubLoop):
+    """Return a task result whose persistence is explicitly incomplete."""
+
+    def run_task(
+        self,
+        *,
+        task: str,
+        workflow_override: str | None = None,
+        human_feedback: str | None = None,
+    ) -> TaskRunOutcome:
+        outcome = super().run_task(
+            task=task,
+            workflow_override=workflow_override,
+            human_feedback=human_feedback,
+        )
+        outcome.persistence_status = "partial"
+        outcome.persistence_failures = ("episodic:result",)
+        return outcome
+
+
 class _FailingLoop:
     """Stub a workflow failure without contacting a provider."""
 
@@ -129,6 +149,20 @@ def test_run_cli_prefers_saved_workflow(
 
     assert _StubLoop.last_instance is not None
     assert _StubLoop.last_instance.last_override == "reasoning"
+
+
+def test_run_cli_returns_partial_exit_code_for_persistence_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr("main.LiveTaskLoop", _PartialPersistenceLoop)
+    config = load_app_config(resolve_config_path(Path("config/config.example.json")))
+
+    caplog.set_level(logging.INFO, logger="drm.cli")
+
+    assert run_cli(config, task="demo", human_feedback="note") == 2
+    assert "partial persistence" in caplog.text
+    assert "episodic:result" in caplog.text
 
 
 def test_run_cli_returns_nonzero_for_workflow_failure(

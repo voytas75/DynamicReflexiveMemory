@@ -6,13 +6,14 @@ Updates:
     v0.3 - 2025-11-07 - Adopted timezone-aware timestamps for workflow metadata.
     v0.4 - 2025-11-07 - Captured drift mitigation summaries in task outcomes.
     v0.5 - 2026-08-05 - Typed workflow model mapping default factories for strict Pyright.
+    v0.6 - 2026-08-05 - Added explicit complete/partial persistence outcomes.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from uuid import uuid4
 
@@ -67,3 +68,5 @@ class TaskRunOutcome:
     review: ReviewRecord
     drift_advisory: Optional[str] = None
     mitigation_summary: Optional[Dict[str, object]] = None
+    persistence_status: Literal["complete", "partial"] = "complete"
+    persistence_failures: tuple[str, ...] = ()

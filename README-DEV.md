@@ -47,7 +47,7 @@
    # Explicit raw output for a trusted local terminal only
    uv run python main.py --mode cli --task "Draft integration plan" --show-result
    ```
-   CLI workflow failures return a non-zero exit code. Default console logs remain redacted; `--show-result` is an explicit opt-in that writes raw task output to stdout.
+   CLI workflow failures return a non-zero exit code. A completed task with incomplete persistence returns exit code `2`, logs only the affected storage boundaries, and should be retried after storage remediation; automatic drift mitigation is skipped when a primary persistence boundary fails. Default console logs remain redacted; `--show-result` is an explicit opt-in that writes raw task output to stdout.
 
 ## Configuration & Secrets
 - Copy `config/config.example.json` to `config/config.json` and update provider credentials before first run.
@@ -103,8 +103,9 @@
 
 ## GUI Overview
 - Workflow selector + task input wires into LiveTaskLoop executions without leaving the GUI.
-- Background threads keep the UI responsive; status widgets stream live updates.
+- Background threads keep the UI responsive; status widgets stream live updates. A `partial` persistence outcome identifies only failed storage boundaries and instructs the operator to remediate storage and retry.
 - Panels expose working/episodic/semantic/review slices, drift advisories, telemetry charts, and review history.
+- Qt availability is guarded by an in-process display check plus a subprocess probe; the local regression suite verifies real `QT_QPA_PLATFORM=offscreen` initialisation and the no-PySide fallback without requiring `pytest-qt`.
 - Settings editor inside the GUI allows on-the-fly config adjustments that persist across sessions (window size, workflow preference, etc.).
 
 ## Roadmap
