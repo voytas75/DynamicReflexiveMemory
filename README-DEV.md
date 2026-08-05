@@ -7,6 +7,11 @@
 - Local runtime first; external providers are optional and configured through environment variables or `config/config.json`.
 - `uv` is supported for environment creation, installs, and command execution; plain `pip`/`venv` remains valid.
 
+## Versioning
+- The package-release source of truth is `[project].version` in `pyproject.toml` (currently `0.1.0`).
+- The `version` key in `config/config.example.json` is preserved configuration-document data; it is not a package-release version.
+- Changelog entries `0.1.1`–`0.1.9` are historical development milestones, not tagged or GitHub-released packages. Create a deliberate version bump and Git tag together for the next release.
+
 ## Environment & Tooling
 - Target interpreter: **Python 3.12**; create a dedicated virtual environment per workspace.
 - Linting and formatting: Ruff (`ruff check` and `ruff format`).
