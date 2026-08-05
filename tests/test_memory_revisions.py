@@ -15,7 +15,11 @@ import pytest
 
 from config.settings import load_app_config
 from core.exceptions import MemoryError
-from core.memory_manager import MemoryManager, MemoryRevisionLogger
+from core.memory_manager import (
+    MemoryManager,
+    MemoryRevisionLogger as LegacyMemoryRevisionLogger,
+)
+from core.memory_revisions import MemoryRevisionLogger
 from models.memory import (
     DriftAnalyticsRecord,
     EpisodicMemoryEntry,
@@ -23,6 +27,10 @@ from models.memory import (
     SemanticNode,
     WorkingMemoryItem,
 )
+
+
+def test_memory_revision_logger_reexport_remains_compatible() -> None:
+    assert LegacyMemoryRevisionLogger is MemoryRevisionLogger
 
 
 def test_memory_revision_log_records_changes(
