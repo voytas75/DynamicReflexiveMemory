@@ -6,6 +6,7 @@ Updates:
     v0.3 - 2025-11-07 - Switched to timezone-aware timestamps across memory records.
     v0.4 - 2025-11-07 - Documented semantic relations to support graph operations.
     v0.5 - 2025-11-08 - Added drift analytics record type for controller trend persistence.
+    v0.6 - 2026-08-05 - Typed collection default factories for strict Pyright.
 """
 
 from __future__ import annotations
@@ -47,9 +48,9 @@ class SemanticNode:
     id: str
     label: str
     definition: str
-    sources: List[str] = field(default_factory=list)
+    sources: List[str] = field(default_factory=list[str])
     timestamp: datetime = field(default_factory=_utcnow)
-    relations: Dict[str, float] = field(default_factory=dict)
+    relations: Dict[str, float] = field(default_factory=dict[str, float])
 
 
 @dataclass(slots=True)
@@ -61,7 +62,7 @@ class ReviewRecord:
     verdict: str
     notes: Optional[str] = None
     quality_score: Optional[float] = None
-    suggestions: List[str] = field(default_factory=list)
+    suggestions: List[str] = field(default_factory=list[str])
     auto_verdict: Optional[str] = None
     created_at: datetime = field(default_factory=_utcnow)
 

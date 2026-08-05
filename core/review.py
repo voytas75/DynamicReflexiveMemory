@@ -9,6 +9,7 @@ Updates:
     v0.6 - 2025-11-07 - Applied provider-aware routing for automated review models.
     v0.7 - 2025-11-07 - Logged automated review failures before surfacing to callers.
     v0.8 - 2025-11-07 - Adjusted reviewer temperature for O-series OpenAI models.
+    v0.9 - 2026-08-05 - Narrowed JSON-safe mapping and sequence traversal for strict Pyright.
 """
 
 from __future__ import annotations
@@ -231,15 +232,17 @@ class ReviewEngine:
             return value
 
         if isinstance(value, Mapping):
+            mapping = cast(Mapping[object, object], value)
             return {
                 str(key): ReviewEngine._to_json_safe(item)
-                for key, item in value.items()
+                for key, item in mapping.items()
             }
 
         if isinstance(value, Sequence) and not isinstance(
             value, (str, bytes, bytearray)
         ):
-            return [ReviewEngine._to_json_safe(item) for item in value]
+            sequence = cast(Sequence[object], value)
+            return [ReviewEngine._to_json_safe(item) for item in sequence]
 
         model_dump = getattr(value, "model_dump", None)
         if callable(model_dump):

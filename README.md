@@ -33,7 +33,7 @@ uv run python main.py --mode cli --task "Draft integration plan" --show-result
 - Configurable LiteLLM routing across fast, reasoning, and local workflows.
 - Unified memory manager spanning Redis working memory and ChromaDB episodic/semantic stores with reflective review cycles.
 - Drift analytics, telemetry panels, and self-adjustment heuristics that surface controller health and automate mitigation plans.
-- CI-aligned quality gates for pytest coverage, mypy, Ruff, and Black.
+- CI-aligned quality gates for Ruff and strict Pyright; pytest remains available for local regression checks.
 - CLI workflows return non-zero status on execution failures; raw task output requires `--show-result`.
 
 ## Developer

@@ -5,6 +5,7 @@ Updates:
     v0.2 - 2025-11-07 - Added TaskRunOutcome summary for live execution loop.
     v0.3 - 2025-11-07 - Adopted timezone-aware timestamps for workflow metadata.
     v0.4 - 2025-11-07 - Captured drift mitigation summaries in task outcomes.
+    v0.5 - 2026-08-05 - Typed workflow model mapping default factories for strict Pyright.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ class TaskRequest:
     workflow: str
     prompt: str
     task_id: str = field(default_factory=lambda: str(uuid4()))
-    context: Dict[str, object] = field(default_factory=dict)
+    context: Dict[str, object] = field(default_factory=dict[str, object])
     created_at: datetime = field(default_factory=_utcnow)
 
 
@@ -41,7 +42,7 @@ class TaskResult:
     workflow: str
     content: str
     latency_seconds: float
-    metadata: Dict[str, object] = field(default_factory=dict)
+    metadata: Dict[str, object] = field(default_factory=dict[str, object])
     created_at: datetime = field(default_factory=_utcnow)
 
 
@@ -53,7 +54,7 @@ class WorkflowSelection:
     rationale: str
     score: float
     timestamp: datetime = field(default_factory=_utcnow)
-    metadata: Dict[str, object] = field(default_factory=dict)
+    metadata: Dict[str, object] = field(default_factory=dict[str, object])
 
 
 @dataclass(slots=True)

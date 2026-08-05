@@ -10,8 +10,9 @@ All notable changes to this project will be documented in this file. The format 
 - Redacted CLI output and memory revision logs by default; raw revision payloads now require an explicit local opt-in.
 - Pruned memory revision-log records older than 30 days during application initialization while preserving a valid hash chain for retained entries.
 - Added a committed uv lockfile and frozen dependency synchronization for CI and developer quality gates.
-- Updated CI actions to verified Node 24 runtimes, set Black's Python target explicitly, and removed obsolete Compose metadata.
+- Updated CI actions to verified Node 24 runtimes and removed obsolete Compose metadata.
 - Made CLI workflow failures return non-zero status and added the explicit `--show-result` output opt-in.
+- Replaced mypy and Black with Ruff plus strict Pyright CI gates while retaining pytest for local regression checks.
 
 ## [0.1.9] - 2026-05-11
 

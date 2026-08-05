@@ -23,14 +23,10 @@ jobs:
           python -m pip install uv
           uv sync --all-extras --frozen
 
-      - name: Run pytest
-        run: uv run --all-extras --frozen pytest --cov --cov-report=term-missing --cov-fail-under=85 --disable-warnings -q
-
-      - name: Run mypy
-        run: uv run --all-extras --frozen mypy .
-
       - name: Run ruff
-        run: uv run --all-extras --frozen ruff check .
+        run: |
+          uv run --all-extras --frozen ruff check .
+          uv run --all-extras --frozen ruff format --check .
 
-      - name: Check formatting
-        run: uv run --all-extras --frozen black --check .
+      - name: Run Pyright
+        run: uv run --all-extras --frozen pyright

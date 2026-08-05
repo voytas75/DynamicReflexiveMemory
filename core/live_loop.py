@@ -9,6 +9,7 @@ Updates:
     v0.5 - 2025-11-07 - Added retrieval-focused context loading and controller mitigation plans.
     v0.6 - 2025-11-07 - Recorded workflow preference in persistent user settings.
     v0.7 - 2025-11-08 - Persisted drift analytics for longitudinal trend analysis.
+    v0.8 - 2026-08-05 - Narrowed hydrated review payload collections for strict Pyright.
 """
 
 from __future__ import annotations
@@ -491,7 +492,9 @@ class LiveTaskLoop:
             created_at = self._coerce_timestamp(payload.get("created_at"))
             suggestions_raw = payload.get("suggestions", [])
             if isinstance(suggestions_raw, list):
-                suggestions = [str(item) for item in suggestions_raw]
+                suggestions = [
+                    str(item) for item in cast(List[object], suggestions_raw)
+                ]
             else:
                 suggestions = []
 

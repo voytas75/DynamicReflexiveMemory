@@ -12,6 +12,7 @@ Updates:
     v0.9 - 2025-11-08 - Added drift analytics layer and metrics reporting hooks.
     v0.10 - 2026-05-11 - Tightened metric payload typing and JSON score/latency coercion for strict mypy.
     v0.11 - 2026-08-05 - Added atomic 30-day retention for revision logs.
+    v0.12 - 2026-08-05 - Added strict Pyright-safe Chroma response and payload narrowing.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, cast
 
 from config.settings import AppConfig, EmbeddingConfig
 from core.exceptions import MemoryError
@@ -270,8 +271,7 @@ class MemoryRevisionLogger:
             updated.pop("hash", None)
             updated["prev_hash"] = previous_hash
             updated["hash"] = self._calculate_hash(updated)
-            record_hash = updated["hash"]
-            previous_hash = record_hash if isinstance(record_hash, str) else None
+            previous_hash = updated["hash"]
             rewritten.append(updated)
 
         with tempfile.NamedTemporaryFile(
@@ -500,6 +500,11 @@ class RedisMemoryStore:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc)
 
+    @staticmethod
+    def coerce_timestamp(value: Optional[object]) -> datetime:
+        """Expose timestamp coercion for store adapters."""
+        return RedisMemoryStore._coerce_timestamp(value)
+
     def _initialise_client(self) -> None:
         """Initialise the Redis client if the dependency is available."""
         try:
@@ -584,10 +589,9 @@ class ChromaMemoryStore:
             return
 
         try:  # pragma: no cover - needs chromadb runtime
-            self._client = chromadb_module.PersistentClient(
-                path=self._persist_directory
-            )
-            self._collection = self._client.get_or_create_collection(
+            client = chromadb_module.PersistentClient(path=self._persist_directory)
+            self._client = client
+            self._collection = client.get_or_create_collection(
                 name=self._collection_name,
                 embedding_function=cast(Any, self._embedding_fn),
             )
@@ -752,6 +756,23 @@ class ChromaMemoryStore:
         """Persist controller drift analytics for trend analysis."""
         self._store_in_collection("analytics", record.id, asdict(record))
 
+    @staticmethod
+    def _response_values(response: object, key: str) -> List[object]:
+        """Return a response field as a safely typed list."""
+        if not isinstance(response, dict):
+            return []
+        mapping = cast(Dict[str, object], response)
+        value = mapping.get(key)
+        return cast(List[object], value) if isinstance(value, list) else []
+
+    @classmethod
+    def _response_first_values(cls, response: object, key: str) -> List[object]:
+        """Return the first nested response field list when it exists."""
+        values = cls._response_values(response, key)
+        if not values or not isinstance(values[0], list):
+            return []
+        return cast(List[object], values[0])
+
     def get_semantic(self, node_id: str) -> Optional[Dict[str, object]]:
         """Return a semantic node payload by identifier if available."""
         if self._collection is None:
@@ -768,7 +789,7 @@ class ChromaMemoryStore:
                 f"Failed to fetch semantic node {node_id}: {exc}"
             ) from exc
 
-        documents = response.get("documents") or []
+        documents = self._response_values(response, "documents")
         if not documents:
             return None
 
@@ -790,7 +811,7 @@ class ChromaMemoryStore:
                 where={"layer": layer},
                 include=["documents"],
             )
-            documents = query.get("documents") or []
+            documents = self._response_values(query, "documents")
             parsed: List[Dict[str, object]] = []
             for doc in documents:
                 if isinstance(doc, str):
@@ -810,7 +831,7 @@ class ChromaMemoryStore:
         )
         return sorted(
             items,
-            key=lambda item: RedisMemoryStore._coerce_timestamp(
+            key=lambda item: RedisMemoryStore.coerce_timestamp(
                 item.get(timestamp_field)
             ),
         )
@@ -833,23 +854,23 @@ class ChromaMemoryStore:
                     n_results=limit,
                     include=["documents", "distances"],
                 )
-                documents = (response.get("documents") or [[]])[0]
-                distances = (response.get("distances") or [[]])[0]
+                documents = self._response_first_values(response, "documents")
+                distances = self._response_first_values(response, "distances")
                 ranked: List[Dict[str, object]] = []
                 for index, document in enumerate(documents):
-                    payload = (
-                        cast(Dict[str, object], json.loads(document))
-                        if isinstance(document, str)
-                        else cast(Dict[str, object], document)
+                    raw_payload = (
+                        json.loads(document) if isinstance(document, str) else document
                     )
-                    if not isinstance(payload, dict):
+                    if not isinstance(raw_payload, dict):
                         continue
+                    payload = cast(Dict[str, object], raw_payload)
                     score = 0.0
-                    if isinstance(distances, list) and index < len(distances):
-                        try:
-                            distance = float(distances[index])
+                    if index < len(distances):
+                        distance_raw = distances[index]
+                        if isinstance(distance_raw, (str, int, float)):
+                            distance = float(distance_raw)
                             score = 1.0 / (1.0 + distance)
-                        except (TypeError, ValueError):
+                        else:
                             score = 0.0
                     enriched = dict(payload)
                     enriched["_score"] = round(score, 6)
@@ -1314,11 +1335,11 @@ class MemoryManager:
             self._logger.debug("Semantic payload missing fields: %s", payload)
             return None
 
-        timestamp = RedisMemoryStore._coerce_timestamp(payload.get("timestamp"))
+        timestamp = RedisMemoryStore.coerce_timestamp(payload.get("timestamp"))
 
         sources_raw = payload.get("sources", [])
         if isinstance(sources_raw, list):
-            sources = [str(item) for item in sources_raw]
+            sources = [str(item) for item in cast(List[object], sources_raw)]
         elif sources_raw:
             sources = [str(sources_raw)]
         else:
@@ -1327,11 +1348,14 @@ class MemoryManager:
         relations_raw = payload.get("relations", {})
         relations: Dict[str, float] = {}
         if isinstance(relations_raw, dict):
-            for key, value in relations_raw.items():
+            relations_mapping = cast(Dict[object, object], relations_raw)
+            for key, value in relations_mapping.items():
                 key_str = str(key)
+                if not isinstance(value, (str, int, float)):
+                    continue
                 try:
                     relations[key_str] = float(value)
-                except (TypeError, ValueError):
+                except ValueError:
                     continue
 
         return SemanticNode(
@@ -1361,7 +1385,8 @@ class MemoryManager:
 
         slo_raw = payload.get("slo_breaches", [])
         if isinstance(slo_raw, (list, tuple, set)):
-            slo_breaches = tuple(str(item) for item in slo_raw)
+            slo_items = cast(Iterable[object], slo_raw)
+            slo_breaches = tuple(str(item) for item in slo_items)
         elif slo_raw:
             slo_breaches = (str(slo_raw),)
         else:
@@ -1373,21 +1398,24 @@ class MemoryManager:
         biases_raw = payload.get("workflow_biases", {})
         workflow_biases: Dict[str, float] = {}
         if isinstance(biases_raw, dict):
-            for key, value in biases_raw.items():
+            biases_mapping = cast(Dict[object, object], biases_raw)
+            for key, value in biases_mapping.items():
+                if not isinstance(value, (str, int, float)):
+                    continue
                 try:
                     workflow_biases[str(key)] = float(value)
-                except (TypeError, ValueError):
+                except ValueError:
                     continue
 
         mitigation_raw = payload.get("mitigation_plan", {})
         if isinstance(mitigation_raw, dict):
-            mitigation_plan = dict(mitigation_raw)
+            mitigation_plan = cast(Dict[str, object], mitigation_raw)
         elif mitigation_raw is None:
             mitigation_plan = {}
         else:
             mitigation_plan = {"value": mitigation_raw}
 
-        created_at = RedisMemoryStore._coerce_timestamp(payload.get("created_at"))
+        created_at = RedisMemoryStore.coerce_timestamp(payload.get("created_at"))
 
         return DriftAnalyticsRecord(
             id=record_id,

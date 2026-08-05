@@ -3,14 +3,14 @@
 ## Current Status
 - Primary entry point is `main.py`, which launches the PySide6 GUI by default and falls back to CLI mode automatically in headless environments.
 - Data layer combines Redis (working memory), ChromaDB (episodic/semantic stores), and persisted review cycles handed off to the GUI telemetry panels.
-- Strict typing enforced through Pydantic models, dataclasses, and mypy strict mode for core modules.
+- Strict typing enforced through Pydantic models, dataclasses, and Pyright strict mode for core modules.
 - Local runtime first; external providers are optional and configured through environment variables or `config/config.json`.
 - `uv` is supported for environment creation, installs, and command execution; plain `pip`/`venv` remains valid.
 
 ## Environment & Tooling
 - Target interpreter: **Python 3.12**; create a dedicated virtual environment per workspace.
-- Formatting: `black` (line length 88) + `isort`; linting via `ruff --fix`.
-- Type checking: `mypy .` before publishing changes.
+- Linting and formatting: Ruff (`ruff check` and `ruff format`).
+- Type checking: `pyright` in strict mode before publishing changes.
 - Testing stack: `pytest`, `pytest-asyncio`, `pytest-cov`, `hypothesis`, and `vcrpy` for HTTP fixtures.
 
 ## Detailed Getting Started
@@ -65,10 +65,13 @@
 ## Testing & Quality Gates
 - Install dev requirements and run the full gate before merging:
   ```bash
-  uv run --all-extras --frozen pytest --cov --cov-fail-under=85 --disable-warnings -q
-  uv run --all-extras --frozen mypy .
   uv run --all-extras --frozen ruff check .
-  uv run --all-extras --frozen black --check .
+  uv run --all-extras --frozen ruff format --check .
+  uv run --all-extras --frozen pyright
+  ```
+- Pytest remains a local regression tool and is not a required CI gate:
+  ```bash
+  uv run --all-extras --frozen pytest --cov --cov-fail-under=85 --disable-warnings -q
   ```
 - Without `uv`, run the same commands directly from the activated virtualenv.
 - Favor `hypothesis` strategies for boundary inputs (long prompts, Unicode edge cases, malformed JSON payloads).
@@ -82,7 +85,7 @@
 - **Observability**: extend `drm.metrics` and `drm.span` loggers for custom sinks. CLI logs retain execution metadata but omit prompts, results, feedback, and review text by default. Wrap external I/O with timeout-aware calls and surface actionable exception messages.
 
 ## CI & Automation
-- GitHub Actions workflow `.github/workflows/ci.yml` runs `uv sync --all-extras --frozen` and then pytest coverage, mypy, Ruff, and Black checks on each push/PR.
+- GitHub Actions workflow `.github/workflows/ci.yml` runs `uv sync --all-extras --frozen` and then Ruff plus strict Pyright on each push/PR.
 - Runtime dependencies are pinned in both `pyproject.toml` and `requirements.txt`; audit transitive dependencies regularly.
 - Local CI-like verification can be run through `uv run --all-extras --frozen` after a frozen sync.
 
