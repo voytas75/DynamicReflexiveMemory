@@ -90,11 +90,11 @@ class _AdvisoryController:
         return "Latency drift detected."
 
 
-def test_live_task_loop_persists_memory(
+def test_live_task_loop_marks_volatile_chroma_fallback_partial(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Running the live loop should persist artefacts and log revisions."""
+    """Process-local long-term fallback must not be reported as durable success."""
 
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
     monkeypatch.setattr("core.memory_manager.redis_module", None)
@@ -115,8 +115,8 @@ def test_live_task_loop_persists_memory(
 
     outcome = loop.run_task("Summarise integration behaviour")
 
-    assert outcome.persistence_status == "complete"
-    assert outcome.persistence_failures == ()
+    assert outcome.persistence_status == "partial"
+    assert outcome.persistence_failures == ("long_term_memory:volatile",)
     assert outcome.result.content.startswith("Stub outcome")
     assert outcome.review.verdict == "pass"
     assert outcome.drift_advisory is None
@@ -127,17 +127,15 @@ def test_live_task_loop_persists_memory(
     reviews = memory_manager.list_layer("review")
     analytics = memory_manager.list_layer("analytics")
 
-    assert episodic and semantic and reviews and analytics
-    assert any(item.get("workflow") == "fast" for item in analytics)
-
-    analytics_records = memory_manager.list_drift_analytics()
-    assert analytics_records
-    assert analytics_records[-1].workflow == "fast"
+    assert episodic and semantic and reviews
+    assert analytics == []
+    assert memory_manager.list_drift_analytics() == []
 
     history = memory_manager.get_revision_history(limit=10)
     assert history
     layers = {entry.get("layer") for entry in history}
-    assert {"episodic", "review", "analytics"}.issubset(layers)
+    assert {"episodic", "review"}.issubset(layers)
+    assert "analytics" not in layers
 
 
 def test_live_task_loop_marks_primary_persistence_failure_partial(
@@ -201,8 +199,13 @@ def test_live_task_loop_persists_drift_advisory_and_mitigation(
     monkeypatch.setattr("core.memory_manager.chromadb_module", None)
     monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
 
+    class DurableMemoryManager(MemoryManager):
+        @property
+        def long_term_memory_is_durable(self) -> bool:
+            return True
+
     config = load_app_config()
-    memory_manager = MemoryManager(config)
+    memory_manager = DurableMemoryManager(config)
     memory_manager.record_semantic(
         SemanticNode(
             id="existing",

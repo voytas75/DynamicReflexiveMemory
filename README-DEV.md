@@ -47,7 +47,7 @@
    # Explicit raw output for a trusted local terminal only
    uv run python main.py --mode cli --task "Draft integration plan" --show-result
    ```
-   CLI workflow failures return a non-zero exit code. A completed task with incomplete persistence returns exit code `2`, logs only the affected storage boundaries, and should be retried after storage remediation; automatic drift mitigation is skipped when a primary persistence boundary fails. Default console logs remain redacted; `--show-result` is an explicit opt-in that writes raw task output to stdout.
+   CLI workflow failures return a non-zero exit code. A completed task with incomplete persistence returns exit code `2`, logs only the affected storage boundaries, and should be retried after storage remediation; automatic drift mitigation is skipped when a primary persistence boundary fails. `long_term_memory:volatile` specifically means Chroma accepted only process-local fallback data, so long-term memory will not survive a restart until durable Chroma storage is restored. Default console logs remain redacted; `--show-result` is an explicit opt-in that writes raw task output to stdout.
 
 ## Configuration & Secrets
 - Copy `config/config.example.json` to `config/config.json` and update provider credentials before first run.
