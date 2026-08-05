@@ -2,18 +2,20 @@
 
 Updates:
     v0.1 - 2026-05-11 - Added mitigation, analytics hydration, and metric snapshot coverage.
+    v0.2 - 2026-08-05 - Added retention coverage for expired revision log entries.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from config.settings import load_app_config
 from core.exceptions import MemoryError
-from core.memory_manager import MemoryManager
+from core.memory_manager import MemoryManager, MemoryRevisionLogger
 from models.memory import (
     DriftAnalyticsRecord,
     EpisodicMemoryEntry,
@@ -101,6 +103,62 @@ def test_memory_revision_log_redacts_content_by_default(
     assert isinstance(history[-1].get("id_digest"), str)
     assert manager.verify_revision_log()
     assert manager.replay_revision_state("episodic") == [{"redacted": True}]
+
+
+def test_memory_revision_log_prunes_entries_older_than_30_days(
+    tmp_path: Path,
+) -> None:
+    """Retention removes expired records and re-chains the retained audit log."""
+
+    log_path = tmp_path / "revisions.jsonl"
+    now = datetime.now(timezone.utc)
+    expired = {
+        "layer": "episodic",
+        "id": "expired-sensitive-identifier",
+        "payload": {"content": "expired-sensitive-content"},
+        "timestamp": (now - timedelta(days=31)).isoformat(),
+        "revision": 1,
+        "prev_hash": None,
+    }
+    expired["hash"] = MemoryRevisionLogger._calculate_hash(expired)
+    retained = {
+        "layer": "episodic",
+        "id": "retained-identifier",
+        "payload": {"content": "retained-content"},
+        "timestamp": (now - timedelta(days=29)).isoformat(),
+        "revision": 2,
+        "prev_hash": expired["hash"],
+    }
+    retained["hash"] = MemoryRevisionLogger._calculate_hash(retained)
+    log_path.write_text(
+        "\n".join(json.dumps(record) for record in (expired, retained)) + "\n",
+        encoding="utf-8",
+    )
+
+    logger = MemoryRevisionLogger(log_path)
+
+    history = logger.history()
+    assert len(history) == 1
+    assert history[0]["id"] == "retained-identifier"
+    assert history[0]["prev_hash"] is None
+    assert history[0]["hash"] != retained["hash"]
+    assert "expired-sensitive-content" not in log_path.read_text(encoding="utf-8")
+    assert logger.verify()
+
+
+def test_memory_revision_log_discards_malformed_records_during_retention(
+    tmp_path: Path,
+) -> None:
+    """Malformed audit records must not block startup retention processing."""
+
+    log_path = tmp_path / "revisions.jsonl"
+    log_path.write_text("not-valid-json\n[]\n", encoding="utf-8")
+
+    logger = MemoryRevisionLogger(log_path)
+
+    assert logger.history() == []
+    assert log_path.read_text(encoding="utf-8") == ""
+    assert logger.verify()
 
 
 def test_revision_log_verification_and_replay(

@@ -11,6 +11,7 @@ Updates:
     v0.8 - 2025-11-08 - Published telemetry metrics snapshots for GUI monitoring.
     v0.9 - 2025-11-08 - Added drift analytics layer and metrics reporting hooks.
     v0.10 - 2026-05-11 - Tightened metric payload typing and JSON score/latency coercion for strict mypy.
+    v0.11 - 2026-08-05 - Added atomic 30-day retention for revision logs.
 """
 
 from __future__ import annotations
@@ -19,9 +20,10 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 from difflib import SequenceMatcher
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, cast
@@ -74,6 +76,7 @@ LOGGER = logging.getLogger("drm.memory")
 REVISION_LOG_ENV = "DRM_MEMORY_LOG_PATH"
 REVISION_LOG_MODE_ENV = "DRM_MEMORY_AUDIT_LOG_MODE"
 FULL_REVISION_LOG_MODE = "full"
+REVISION_LOG_RETENTION_DAYS = 30
 DEFAULT_REVISION_LOG = PROJECT_ROOT / "data" / "logs" / "memory_revisions.jsonl"
 
 SEMANTIC_NODE_PREFIX = "node:"
@@ -91,6 +94,7 @@ class MemoryRevisionLogger:
         self._path = log_path
         self._mode = self._resolve_log_mode()
         self._lock = Lock()
+        self._prune_expired_records()
         self._revision, self._tail_hash = self._load_log_tail()
 
     def log(self, layer: str, identifier: str, payload: Dict[str, object]) -> None:
@@ -191,6 +195,102 @@ class MemoryRevisionLogger:
             "Unknown %s mode; using redacted audit records.", REVISION_LOG_MODE_ENV
         )
         return "redacted"
+
+    def _prune_expired_records(self) -> None:
+        """Remove expired records and preserve a valid hash chain for the remainder."""
+        if not self._path.exists():
+            return
+
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            days=REVISION_LOG_RETENTION_DAYS
+        )
+        retained: List[Dict[str, object]] = []
+        expired_count = 0
+        malformed_count = 0
+
+        with self._lock:
+            try:
+                with self._path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            parsed_record = json.loads(line)
+                        except json.JSONDecodeError:
+                            malformed_count += 1
+                            continue
+                        if not isinstance(parsed_record, dict):
+                            malformed_count += 1
+                            continue
+                        record = cast(Dict[str, object], parsed_record)
+                        if self._is_expired_record(record, cutoff):
+                            expired_count += 1
+                        else:
+                            retained.append(record)
+            except OSError as exc:
+                LOGGER.warning("Unable to apply revision-log retention: %s", exc)
+                return
+
+            if not expired_count and not malformed_count:
+                return
+
+            try:
+                self._rewrite_records(retained)
+            except OSError as exc:
+                LOGGER.warning("Unable to rewrite retained revision log: %s", exc)
+                return
+
+        LOGGER.info(
+            "Applied %s-day revision-log retention: pruned=%s malformed=%s.",
+            REVISION_LOG_RETENTION_DAYS,
+            expired_count,
+            malformed_count,
+        )
+
+    @staticmethod
+    def _is_expired_record(record: Dict[str, object], cutoff: datetime) -> bool:
+        timestamp = record.get("timestamp")
+        if not isinstance(timestamp, str):
+            return False
+        try:
+            parsed = datetime.fromisoformat(timestamp)
+        except ValueError:
+            return False
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed < cutoff
+
+    def _rewrite_records(self, records: Sequence[Dict[str, object]]) -> None:
+        """Atomically rewrite retained records with a fresh valid hash chain."""
+        previous_hash: Optional[str] = None
+        rewritten: List[Dict[str, object]] = []
+        for record in records:
+            updated = dict(record)
+            updated.pop("hash", None)
+            updated["prev_hash"] = previous_hash
+            updated["hash"] = self._calculate_hash(updated)
+            record_hash = updated["hash"]
+            previous_hash = record_hash if isinstance(record_hash, str) else None
+            rewritten.append(updated)
+
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=self._path.parent,
+            prefix=f".{self._path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            for record in rewritten:
+                handle.write(json.dumps(record, default=str))
+                handle.write("\n")
+        try:
+            temporary_path.replace(self._path)
+        except OSError:
+            temporary_path.unlink(missing_ok=True)
+            raise
 
     def _load_log_tail(self) -> Tuple[int, Optional[str]]:
         if not self._path.exists():

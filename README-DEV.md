@@ -74,7 +74,7 @@
 - Keep coverage ≥85% on core logic modules; justify exceptions in PR descriptions if temporary.
 
 ## Memory & Telemetry
-- **Memory Revision Log**: mutations append redacted audit records to `data/logs/memory_revisions.jsonl`; use `DRM_MEMORY_LOG_PATH` to override for CI. Set `DRM_MEMORY_AUDIT_LOG_MODE=full` only for a trusted local audit session that explicitly requires raw payload replay. Existing JSONL files are not rewritten; rotate them manually after handling retained data safely.
+- **Memory Revision Log**: mutations append redacted audit records to `data/logs/memory_revisions.jsonl`; use `DRM_MEMORY_LOG_PATH` to override for CI. Each application initialization atomically prunes records older than 30 days, discards malformed entries, and re-chains the retained log. Set `DRM_MEMORY_AUDIT_LOG_MODE=full` only for a trusted local audit session that explicitly requires raw payload replay.
 - **Semantic Graph**: embeddings and relationship weights live in ChromaDB. Drift mitigation routines decay weights to prioritize fresh context.
 - **Drift Analytics**: every controller run records latency, verdicts, mitigation plans, and SLO breaches. Access programmatically via `MemoryManager.list_drift_analytics()` or inspect in the GUI Drift Trends tab.
 - **Observability**: extend `drm.metrics` and `drm.span` loggers for custom sinks. CLI logs retain execution metadata but omit prompts, results, feedback, and review text by default. Wrap external I/O with timeout-aware calls and surface actionable exception messages.
