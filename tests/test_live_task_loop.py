@@ -190,6 +190,67 @@ def test_live_task_loop_marks_primary_persistence_failure_partial(
     assert outcome.mitigation_summary is None
 
 
+def test_live_task_loop_marks_semantic_read_failure_partial(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    monkeypatch.setattr("core.memory_manager.chromadb_module", None)
+    monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
+
+    class SemanticReadFailureManager(MemoryManager):
+        @property
+        def long_term_memory_is_durable(self) -> bool:
+            return True
+
+        def list_semantic_nodes(
+            self, limit: Optional[int] = None
+        ) -> list[SemanticNode]:
+            del limit
+            raise MemoryError("semantic read failed")
+
+    class ControllerThatMustNotRun:
+        @property
+        def last_advisory(self) -> Optional[str]:
+            return None
+
+        @property
+        def last_plan(self) -> dict[str, object]:
+            return {}
+
+        @property
+        def workflow_biases(self) -> dict[str, float]:
+            return {}
+
+        def register_result(
+            self,
+            selection: WorkflowSelection,
+            result: TaskResult,
+            review: ReviewRecord,
+        ) -> Optional[str]:
+            del selection, result, review
+            raise AssertionError("controller must be skipped for partial persistence")
+
+    config = load_app_config()
+    loop = LiveTaskLoop(
+        config,
+        memory_manager=SemanticReadFailureManager(config),
+        executor=cast(Any, _StubExecutor()),
+        review_engine=cast(Any, _StubReviewEngine()),
+        controller=cast(Any, ControllerThatMustNotRun()),
+    )
+
+    outcome = loop.run_task("Persist result before semantic read failure")
+
+    assert outcome.persistence_status == "partial"
+    assert outcome.persistence_failures == ("semantic:summary",)
+    assert outcome.result.content.startswith("Stub outcome")
+    assert outcome.review.verdict == "pass"
+    assert outcome.drift_advisory is None
+    assert outcome.mitigation_summary is None
+
+
 def test_live_task_loop_persists_drift_advisory_and_mitigation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

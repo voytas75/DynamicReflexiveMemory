@@ -108,7 +108,10 @@
 - Qt availability is guarded by an in-process display check plus a subprocess probe; the local regression suite verifies real `QT_QPA_PLATFORM=offscreen` initialisation and the no-PySide fallback without requiring `pytest-qt`.
 - Settings editor inside the GUI allows on-the-fly config adjustments that persist across sessions (window size, workflow preference, etc.).
 
-## Roadmap
-1. Harden real provider acceptance with redacted, case-specific evidence.
-2. WebSocket exposure for telemetry feed to enable external dashboards.
-3. CLI/webhook exports for drift analytics to plug into monitoring pipelines.
+## Explicitly Deferred — Outside the Current Local-First Baseline
+
+The following ideas are not active implementation work. Each requires a separate approved scope decision before code, dependencies, networking, or provider calls change:
+
+1. Provider-backed acceptance using redacted, case-specific evidence.
+2. WebSocket telemetry exposure or any external dashboard/listener.
+3. CLI/webhook exports for drift analytics or any public/API deployment surface.
