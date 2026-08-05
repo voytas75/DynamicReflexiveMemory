@@ -10,6 +10,8 @@ Updates:
     v0.6 - 2025-11-07 - Recorded workflow preference in persistent user settings.
     v0.7 - 2025-11-08 - Persisted drift analytics for longitudinal trend analysis.
     v0.8 - 2026-08-05 - Narrowed hydrated review payload collections for strict Pyright.
+    v0.9 - 2026-08-05 - Return explicit partial persistence outcomes and
+        skip automatic mitigation after a primary persistence failure.
 """
 
 from __future__ import annotations
@@ -86,6 +88,7 @@ class LiveTaskLoop:
             context=request_context,
         )
         working_key_prefix = f"task:{request.task_id}"
+        persistence_failures: List[str] = []
         working_payload = cast(
             Dict[str, object],
             {
@@ -95,10 +98,11 @@ class LiveTaskLoop:
                 "selection_rationale": selection.rationale,
             },
         )
-        self._store_working_item(
+        if not self._store_working_item(
             key=f"{working_key_prefix}:context",
             payload=working_payload,
-        )
+        ):
+            persistence_failures.append("working:context")
 
         layers = self._load_memory_snapshots(task)
         prompt_context = PromptContext(
@@ -120,19 +124,21 @@ class LiveTaskLoop:
         )
 
         result = self._executor.execute(request)
-        self._persist_result(
+        if not self._persist_result(
             request=request,
             selection=selection,
             result=result,
             compiled_prompt=prompt,
             user_task=task,
-        )
-        self._persist_semantic_summary(
+        ):
+            persistence_failures.append("episodic:result")
+        if not self._persist_semantic_summary(
             request=request,
             selection=selection,
             result=result,
             user_task=task,
-        )
+        ):
+            persistence_failures.append("semantic:summary")
 
         try:
             review = self._review_engine.perform_review(
@@ -149,43 +155,8 @@ class LiveTaskLoop:
                 exc_info=True,
             )
             raise
-        self._persist_review(review)
-
-        drift_advisory = self._controller.register_result(selection, result, review)
-        controller_plan = dict(self._controller.last_plan)
-
-        memory_actions: Optional[Dict[str, object]] = None
-        if drift_advisory:
-            memory_actions = self._memory_manager.apply_drift_mitigation(
-                task_id=request.task_id
-            )
-            self._persist_drift_advisory(
-                request.task_id, selection.workflow, drift_advisory
-            )
-        elif controller_plan:
-            self._logger.debug(
-                "Controller produced plan without drift advisory: %s", controller_plan
-            )
-
-        mitigation_summary: Optional[Dict[str, object]] = None
-        if controller_plan:
-            mitigation_summary = dict(controller_plan)
-        if memory_actions:
-            if mitigation_summary is None:
-                mitigation_summary = {}
-            mitigation_summary["memory_actions"] = memory_actions
-
-        self._persist_drift_analytics(
-            task_id=request.task_id,
-            selection=selection,
-            result=result,
-            review=review,
-            advisory=drift_advisory,
-            mitigation=mitigation_summary or controller_plan,
-        )
-
-        if mitigation_summary:
-            self._persist_mitigation_summary(request.task_id, mitigation_summary)
+        if not self._persist_review(review):
+            persistence_failures.append("review")
 
         result_payload = cast(
             Dict[str, object],
@@ -195,13 +166,72 @@ class LiveTaskLoop:
                 "metadata": result.metadata,
             },
         )
-        self._store_working_item(
+        if not self._store_working_item(
             key=f"{working_key_prefix}:result",
             payload=result_payload,
-        )
+        ):
+            persistence_failures.append("working:result")
+
+        drift_advisory: Optional[str] = None
+        mitigation_summary: Optional[Dict[str, object]] = None
+        if persistence_failures:
+            self._logger.warning(
+                "Skipping controller and automatic mitigation for task %s due to "
+                "persistence failures: %s",
+                request.task_id,
+                ",".join(persistence_failures),
+            )
+        else:
+            drift_advisory = self._controller.register_result(selection, result, review)
+            controller_plan = dict(self._controller.last_plan)
+
+            memory_actions: Optional[Dict[str, object]] = None
+            if drift_advisory:
+                memory_actions = self._memory_manager.apply_drift_mitigation(
+                    task_id=request.task_id
+                )
+                if not self._persist_drift_advisory(
+                    request.task_id, selection.workflow, drift_advisory
+                ):
+                    persistence_failures.append("episodic:drift_advisory")
+            elif controller_plan:
+                self._logger.debug(
+                    "Controller produced plan without drift advisory: %s",
+                    controller_plan,
+                )
+
+            if controller_plan:
+                mitigation_summary = dict(controller_plan)
+            if memory_actions:
+                if mitigation_summary is None:
+                    mitigation_summary = {}
+                mitigation_summary["memory_actions"] = memory_actions
+
+            if not self._persist_drift_analytics(
+                task_id=request.task_id,
+                selection=selection,
+                result=result,
+                review=review,
+                advisory=drift_advisory,
+                mitigation=mitigation_summary or controller_plan,
+            ):
+                persistence_failures.append("analytics")
+
+            if mitigation_summary and not self._persist_mitigation_summary(
+                request.task_id, mitigation_summary
+            ):
+                persistence_failures.append("working:mitigation")
 
         if self._user_settings:
             self._user_settings.update(last_workflow=selection.workflow)
+
+        persistence_status = "partial" if persistence_failures else "complete"
+        if persistence_status == "partial":
+            self._logger.warning(
+                "Task %s completed with partial persistence: %s",
+                request.task_id,
+                ",".join(persistence_failures),
+            )
 
         return TaskRunOutcome(
             selection=selection,
@@ -210,6 +240,8 @@ class LiveTaskLoop:
             review=review,
             drift_advisory=drift_advisory,
             mitigation_summary=mitigation_summary,
+            persistence_status=persistence_status,
+            persistence_failures=tuple(persistence_failures),
         )
 
     def _persist_result(
@@ -220,7 +252,7 @@ class LiveTaskLoop:
         *,
         compiled_prompt: str,
         user_task: str,
-    ) -> None:
+    ) -> bool:
         metadata = cast(
             Dict[str, object],
             {
@@ -236,13 +268,15 @@ class LiveTaskLoop:
             content=result.content,
             metadata=metadata,
         )
-        self._safe_record_episodic(entry)
+        return self._safe_record_episodic(entry)
 
-    def _persist_review(self, review: ReviewRecord) -> None:
+    def _persist_review(self, review: ReviewRecord) -> bool:
         try:
             self._memory_manager.record_review(review)
         except MemoryError as exc:
             self._logger.error("Failed to persist review %s: %s", review.id, exc)
+            return False
+        return True
 
     def _persist_semantic_summary(
         self,
@@ -251,15 +285,15 @@ class LiveTaskLoop:
         selection: WorkflowSelection,
         result: TaskResult,
         user_task: str,
-    ) -> None:
+    ) -> bool:
         """Create a lightweight semantic summary node derived from the task outcome."""
         if not result.content.strip():
-            return
+            return True
 
         label = self._build_semantic_label(user_task)
         definition = self._build_semantic_definition(result)
         if not definition:
-            return
+            return True
 
         recent_nodes = self._memory_manager.list_semantic_nodes(limit=3)
 
@@ -278,8 +312,9 @@ class LiveTaskLoop:
                 node.id,
                 exc,
             )
-            return
+            return False
 
+        linked_all_nodes = True
         for related in recent_nodes:
             if related.id == node.id:
                 continue
@@ -295,6 +330,8 @@ class LiveTaskLoop:
                     related.id,
                     exc,
                 )
+                linked_all_nodes = False
+        return linked_all_nodes
 
     @staticmethod
     def _build_semantic_label(user_task: str) -> str:
@@ -317,7 +354,7 @@ class LiveTaskLoop:
 
     def _persist_drift_advisory(
         self, task_id: str, workflow: str, advisory: str
-    ) -> None:
+    ) -> bool:
         metadata = cast(
             Dict[str, object],
             {
@@ -331,17 +368,18 @@ class LiveTaskLoop:
             content=advisory,
             metadata=metadata,
         )
-        self._safe_record_episodic(entry)
+        episodic_persisted = self._safe_record_episodic(entry)
         drift_payload: Dict[str, object] = dict(metadata)
         drift_payload["advisory"] = advisory
-        self._store_working_item(
+        working_persisted = self._store_working_item(
             key=f"task:{task_id}:drift",
             payload=drift_payload,
         )
+        return episodic_persisted and working_persisted
 
     def _persist_mitigation_summary(
         self, task_id: str, summary: Dict[str, object]
-    ) -> None:
+    ) -> bool:
         payload = cast(
             Dict[str, object],
             {
@@ -349,7 +387,7 @@ class LiveTaskLoop:
                 "applied_at": datetime.now(timezone.utc).isoformat(),
             },
         )
-        self._store_working_item(
+        return self._store_working_item(
             key=f"task:{task_id}:mitigation",
             payload=payload,
         )
@@ -363,7 +401,7 @@ class LiveTaskLoop:
         review: Optional[ReviewRecord],
         advisory: Optional[str],
         mitigation: Optional[Dict[str, object]],
-    ) -> None:
+    ) -> bool:
         slo_raw: Optional[object] = None
         if mitigation and "slo_breaches" in mitigation:
             slo_raw = mitigation.get("slo_breaches")
@@ -393,8 +431,10 @@ class LiveTaskLoop:
             self._logger.error(
                 "Failed to persist drift analytics %s: %s", record.id, exc
             )
+            return False
+        return True
 
-    def _store_working_item(self, key: str, payload: Dict[str, object]) -> None:
+    def _store_working_item(self, key: str, payload: Dict[str, object]) -> bool:
         item = WorkingMemoryItem(
             key=key,
             payload=payload,
@@ -404,6 +444,8 @@ class LiveTaskLoop:
             self._memory_manager.put_working_item(item)
         except MemoryError as exc:
             self._logger.error("Failed to persist working memory item %s: %s", key, exc)
+            return False
+        return True
 
     def _load_memory_snapshots(self, task_query: str, limit: int = 5) -> _LayerSnapshot:
         episodic = self._safe_layer_query("episodic", task_query, limit)
@@ -529,13 +571,15 @@ class LiveTaskLoop:
             self._logger.debug("Failed to hydrate review payload %s: %s", payload, exc)
             return None
 
-    def _safe_record_episodic(self, entry: EpisodicMemoryEntry) -> None:
+    def _safe_record_episodic(self, entry: EpisodicMemoryEntry) -> bool:
         try:
             self._memory_manager.record_episodic(entry)
         except MemoryError as exc:
             self._logger.error(
                 "Failed to persist episodic memory %s: %s", entry.id, exc
             )
+            return False
+        return True
 
     @staticmethod
     def _coerce_timestamp(value: object) -> datetime:

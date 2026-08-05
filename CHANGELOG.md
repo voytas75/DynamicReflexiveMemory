@@ -9,6 +9,7 @@ The package version source of truth is `[project].version` in `pyproject.toml` (
 ## [Unreleased]
 
 ### Changed
+- Task runs now surface incomplete persistence as a `partial` outcome with CLI exit code `2`; primary persistence failure skips automatic drift mitigation and reports only failed storage boundaries for remediation/retry.
 - Added an observational CodeQL workflow for Python source scanning on pushes and pull requests.
 - Added isolated real Redis and ChromaDB acceptance coverage: Redis receives a dynamic loopback port and ChromaDB persists through a temporary local directory with a deterministic embedding function.
 - Bound retrieved-memory prompt context to 6,000 characters and label it as untrusted reference data; the direct task instruction remains separate.

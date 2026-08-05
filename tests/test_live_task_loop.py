@@ -115,6 +115,8 @@ def test_live_task_loop_persists_memory(
 
     outcome = loop.run_task("Summarise integration behaviour")
 
+    assert outcome.persistence_status == "complete"
+    assert outcome.persistence_failures == ()
     assert outcome.result.content.startswith("Stub outcome")
     assert outcome.review.verdict == "pass"
     assert outcome.drift_advisory is None
@@ -136,6 +138,58 @@ def test_live_task_loop_persists_memory(
     assert history
     layers = {entry.get("layer") for entry in history}
     assert {"episodic", "review", "analytics"}.issubset(layers)
+
+
+def test_live_task_loop_marks_primary_persistence_failure_partial(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    monkeypatch.setattr("core.memory_manager.chromadb_module", None)
+    monkeypatch.setattr("core.memory_manager.chroma_embeddings_module", None)
+
+    class FailingMemoryManager(MemoryManager):
+        def record_episodic(self, entry: EpisodicMemoryEntry) -> None:
+            raise MemoryError(f"episodic failed for {entry.id}")
+
+    class ControllerThatMustNotRun:
+        @property
+        def last_advisory(self) -> Optional[str]:
+            return None
+
+        @property
+        def last_plan(self) -> dict[str, object]:
+            return {}
+
+        @property
+        def workflow_biases(self) -> dict[str, float]:
+            return {}
+
+        def register_result(
+            self,
+            selection: WorkflowSelection,
+            result: TaskResult,
+            review: ReviewRecord,
+        ) -> Optional[str]:
+            del selection, result, review
+            raise AssertionError("controller must be skipped for partial persistence")
+
+    config = load_app_config()
+    loop = LiveTaskLoop(
+        config,
+        memory_manager=FailingMemoryManager(config),
+        executor=cast(Any, _StubExecutor()),
+        review_engine=cast(Any, _StubReviewEngine()),
+        controller=cast(Any, ControllerThatMustNotRun()),
+    )
+
+    outcome = loop.run_task("Persist partially")
+
+    assert outcome.persistence_status == "partial"
+    assert "episodic:result" in outcome.persistence_failures
+    assert outcome.drift_advisory is None
+    assert outcome.mitigation_summary is None
 
 
 def test_live_task_loop_persists_drift_advisory_and_mitigation(
