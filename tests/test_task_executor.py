@@ -8,6 +8,7 @@ Updates:
 from __future__ import annotations
 
 import builtins
+import logging
 from io import StringIO
 from types import SimpleNamespace
 from typing import Any
@@ -220,16 +221,19 @@ def test_execute_returns_result_with_redacted_metadata(
 
 
 def test_execute_retries_timeouts_then_raises(
-    task_executor: TaskExecutor, monkeypatch: pytest.MonkeyPatch
+    task_executor: TaskExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     calls = {"count": 0}
+    marker = "provider-timeout-prompt-marker"
 
     class DummyTimeout(Exception):
         """Placeholder timeout exception."""
 
     def _completion(**_: object) -> dict[str, object]:
         calls["count"] += 1
-        raise DummyTimeout("slow")
+        raise DummyTimeout(marker)
 
     dummy_litellm = SimpleNamespace(
         completion=_completion,
@@ -239,10 +243,43 @@ def test_execute_retries_timeouts_then_raises(
     monkeypatch.setattr("core.task_executor.time.sleep", lambda _: None)
 
     request = TaskRequest(workflow="local", prompt="hello")
-    with pytest.raises(WorkflowError, match="failed after 2 attempts"):
+    caplog.set_level(logging.WARNING, logger="drm.executor")
+    with pytest.raises(WorkflowError, match="failed after 2 attempts") as error:
         task_executor.execute(request)
 
     assert calls["count"] == 2
+    assert marker not in caplog.text
+    assert marker not in str(error.value)
+    assert "error_type=DummyTimeout" in caplog.text
+    assert error.value.__cause__ is None
+
+
+def test_execute_redacts_provider_failure_details(
+    task_executor: TaskExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    marker = "provider-error-result-and-secret-marker"
+
+    class ProviderFailure(Exception):
+        """Synthetic provider exception carrying sensitive-looking detail."""
+
+    def _completion(**_: object) -> dict[str, object]:
+        raise ProviderFailure(marker)
+
+    monkeypatch.setattr(
+        "core.task_executor.litellm",
+        SimpleNamespace(completion=_completion, Timeout=TimeoutError),
+    )
+    caplog.set_level(logging.ERROR, logger="drm.executor")
+
+    with pytest.raises(WorkflowError, match="failed after 1 attempts") as error:
+        task_executor.execute(TaskRequest(workflow="local", prompt="hello"))
+
+    assert marker not in caplog.text
+    assert marker not in str(error.value)
+    assert "error_type=ProviderFailure" in caplog.text
+    assert error.value.__cause__ is None
 
 
 def test_execute_requires_configured_workflow(

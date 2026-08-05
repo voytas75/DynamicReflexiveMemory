@@ -10,6 +10,8 @@ Updates:
     v0.7 - 2025-11-07 - Logged automated review failures before surfacing to callers.
     v0.8 - 2025-11-07 - Adjusted reviewer temperature for O-series OpenAI models.
     v0.9 - 2026-08-05 - Narrowed JSON-safe mapping and sequence traversal for strict Pyright.
+    v1.0 - 2026-08-05 - Redacted provider failure details from default logs and
+        review exceptions.
 """
 
 from __future__ import annotations
@@ -149,7 +151,9 @@ class ReviewEngine:
             parsed = self._parse_automated_review(auto_notes)
             return parsed
         except litellm.Timeout as exc:
-            self._logger.warning("Automated review timeout: %s", exc)
+            self._logger.warning(
+                "Automated review timed out (error_type=%s).", type(exc).__name__
+            )
             return AutomatedReview(
                 verdict="timeout",
                 quality_score=None,
@@ -159,12 +163,11 @@ class ReviewEngine:
             )
         except Exception as exc:  # pragma: no cover - runtime failure
             self._logger.error(
-                "Automated review failed for task %s: %s",
+                "Automated review failed for task %s (error_type=%s).",
                 request.task_id,
-                exc,
-                exc_info=True,
+                type(exc).__name__,
             )
-            raise ReviewError(f"Automated review failed: {exc}") from exc
+            raise ReviewError("Automated review failed.") from None
 
     @staticmethod
     def _build_record(
