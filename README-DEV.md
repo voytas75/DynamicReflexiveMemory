@@ -47,11 +47,11 @@
    # Explicit raw output for a trusted local terminal only
    uv run python main.py --mode cli --task "Draft integration plan" --show-result
    ```
-   CLI workflow failures return a non-zero exit code. A completed task with incomplete persistence returns exit code `2`, logs only the affected storage boundaries, and should be retried after storage remediation; automatic drift mitigation is skipped when a primary persistence boundary fails. `long_term_memory:volatile` specifically means Chroma accepted only process-local fallback data, so long-term memory will not survive a restart until durable Chroma storage is restored. Default console logs redact prompts, results, feedback, and provider failures: execution/review failures expose only the stage, attempt, and exception-class label. `--show-result` is an explicit opt-in that writes raw task output to stdout.
+   CLI workflow failures return a non-zero exit code. A completed task with incomplete persistence returns exit code `2`, logs only the affected storage boundaries, and should be retried after storage remediation; automatic drift mitigation is skipped when a primary persistence boundary fails. `long_term_memory:volatile` specifically means Chroma accepted only process-local fallback data, so long-term memory will not survive a restart until durable Chroma storage is restored. Default console logs redact prompts, results, feedback, and provider failures: execution/review and Azure embedding/Chroma storage failures expose only the stage or layer, attempt where applicable, and exception-class label. `--show-result` is an explicit opt-in that writes raw task output to stdout.
 
 ## Configuration & Secrets
 - Copy `config/config.example.json` to `config/config.json` and update provider credentials before first run.
-- `config/config.json` holds workflow routing, model identifiers, and storage paths; keep values explicit to honor KISS/DRY.
+- `config/config.json` holds workflow routing, model identifiers, and storage paths; task execution and automated review share Azure/Ollama LiteLLM routing, including `OLLAMA_BASE_URL` override and WSL2 host detection.
 - `config/logging.conf` defines structured log routing (telemetry, spans, metrics). Extend handlers here instead of in code.
 - Environment variables load through `.env` (managed by `python-dotenv`). Never commit `.env` files.
 - Missing or invalid credentials raise descriptive `WorkflowError` exceptions with contextual hints; propagate new errors through custom exception types.

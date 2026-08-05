@@ -17,6 +17,8 @@ Updates:
     v0.14 - 2026-08-05 - Extracted revision logging into core.memory_revisions.
     v0.15 - 2026-08-05 - Exposed durable long-term storage state so callers cannot
         report process-local Chroma fallback as a complete persistence success.
+    v0.16 - 2026-08-05 - Redacted Azure embedding and Chroma storage failure
+        details from default logs and domain errors.
 """
 
 from __future__ import annotations
@@ -339,8 +341,8 @@ class ChromaMemoryStore:
             os.environ.setdefault("CHROMA_CACHE_DIR", str(cache_dir))
         except OSError as exc:
             self._logger.error(
-                "Failed to prepare Chroma directories (%s); falling back to in-memory store.",
-                exc,
+                "Failed to prepare Chroma directories (error_type=%s); falling back to in-memory store.",
+                type(exc).__name__,
             )
             return
 
@@ -361,8 +363,8 @@ class ChromaMemoryStore:
             )
         except Exception as exc:
             self._logger.error(
-                "ChromaDB connection failed (%s); falling back to in-memory store.",
-                exc,
+                "ChromaDB connection failed (error_type=%s); falling back to in-memory store.",
+                type(exc).__name__,
             )
             self._client = None
 
@@ -438,8 +440,8 @@ class ChromaMemoryStore:
             )
         except Exception as exc:  # pragma: no cover
             self._logger.error(
-                "Failed to initialise Azure OpenAI client (%s); falling back to in-memory store.",
-                exc,
+                "Failed to initialise Azure OpenAI client (error_type=%s); falling back to in-memory store.",
+                type(exc).__name__,
             )
             return None
 
@@ -478,7 +480,10 @@ class ChromaMemoryStore:
                     )
                     return [item.embedding for item in response.data]
                 except Exception as exc:  # pragma: no cover
-                    raise MemoryError(f"Azure embedding request failed: {exc}") from exc
+                    raise MemoryError(
+                        "Azure embedding request failed "
+                        f"(error_type={type(exc).__name__})."
+                    ) from None
 
         return AzureEmbeddingFunction(client, deployment_name)
 
@@ -500,14 +505,16 @@ class ChromaMemoryStore:
             message = str(exc).lower()
             if "permission" in message or "embedding function" in message:
                 self._logger.warning(
-                    "ChromaDB unavailable (%s); reverting to in-memory store.", exc
+                    "ChromaDB unavailable (error_type=%s); reverting to in-memory store.",
+                    type(exc).__name__,
                 )
                 self._collection = None
                 self._fallback[layer][entry_id] = payload
                 return
             raise MemoryError(
-                f"Failed to persist {layer} memory entry {entry_id}: {exc}"
-            ) from exc
+                f"Failed to persist {layer} memory entry "
+                f"(error_type={type(exc).__name__})."
+            ) from None
 
     def add_episodic(self, entry: EpisodicMemoryEntry) -> None:
         """Persist an episodic memory entry."""
@@ -555,8 +562,8 @@ class ChromaMemoryStore:
             )
         except Exception as exc:  # pragma: no cover - chromadb failure
             raise MemoryError(
-                f"Failed to fetch semantic node {node_id}: {exc}"
-            ) from exc
+                f"Failed to fetch semantic node (error_type={type(exc).__name__})."
+            ) from None
 
         documents = self._response_values(response, "documents")
         if not documents:
@@ -587,7 +594,9 @@ class ChromaMemoryStore:
                     parsed.append(cast(Dict[str, object], json.loads(doc)))
             return self._sort_layer_payloads(layer, parsed)
         except Exception as exc:
-            raise MemoryError(f"Failed to query {layer} memory: {exc}") from exc
+            raise MemoryError(
+                f"Failed to query {layer} memory (error_type={type(exc).__name__})."
+            ) from None
 
     @staticmethod
     def _sort_layer_payloads(
@@ -649,8 +658,8 @@ class ChromaMemoryStore:
                     return ranked[:limit]
             except Exception as exc:
                 self._logger.warning(
-                    "Chroma query failed (%s); falling back to local scoring.",
-                    exc,
+                    "Chroma query failed (error_type=%s); falling back to local scoring.",
+                    type(exc).__name__,
                 )
 
         return self._fallback_search(layer, normalized_query, limit)

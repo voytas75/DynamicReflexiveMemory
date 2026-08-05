@@ -14,21 +14,26 @@ Updates:
     v1.0 - 2026-08-05 - Made workflow failure exception state explicit for strict typing.
     v1.1 - 2026-08-05 - Redacted provider failure details from default logs and
         workflow exceptions.
+    v1.2 - 2026-08-05 - Delegated Azure/Ollama routing to the shared provider
+        routing seam.
 """
 
 from __future__ import annotations
 
-import ipaddress
 import logging
-import subprocess
 import time
-from functools import lru_cache
-from os import getenv
 from typing import Any, Dict, Mapping, Optional, Tuple, cast
 
 from config.settings import AppConfig, WorkflowModelConfig
 from core.controller import SelfAdjustingController
 from core.exceptions import WorkflowError
+from core.provider_routing import (
+    DEFAULT_OLLAMA_BASE as _DEFAULT_OLLAMA_BASE,
+    ProviderRoutingError,
+    resolve_ollama_base_url,
+    resolve_provider_configuration,
+    resolve_provider_model,
+)
 from models.workflows import TaskRequest, TaskResult, WorkflowSelection
 
 try:  # pragma: no cover - optional dependency
@@ -41,66 +46,10 @@ litellm = cast(Any, _litellm)
 LOGGER = logging.getLogger("drm.executor")
 
 
-@lru_cache(maxsize=1)
-def _detect_windows_host_ip(timeout_seconds: float = 2.0) -> Optional[str]:
-    """Detect the Windows host IP when running inside WSL2.
-
-    Returns the first "default via" IP discovered by ``ip route`` if the
-    environment appears to be Windows Subsystem for Linux. The lookup is cached
-    to avoid repeated subprocess execution.
-    """
-
-    try:
-        with open("/proc/version", encoding="utf-8") as version_file:
-            if "microsoft" not in version_file.read().lower():
-                return None
-    except OSError:
-        return None
-
-    try:
-        result = subprocess.run(
-            ["ip", "route"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-    if result.returncode != 0 or not result.stdout:
-        return None
-
-    for line in result.stdout.splitlines():
-        tokens = line.strip().split()
-        if not tokens or tokens[0] != "default":
-            continue
-        try:
-            via_index = tokens.index("via")
-        except ValueError:
-            continue
-        if via_index + 1 >= len(tokens):
-            continue
-        candidate = tokens[via_index + 1]
-        if _is_ipv4(candidate):
-            return candidate
-
-    return None
-
-
-def _is_ipv4(value: str) -> bool:
-    """Return ``True`` when *value* is a valid IPv4 address."""
-
-    try:
-        return isinstance(ipaddress.ip_address(value), ipaddress.IPv4Address)
-    except ValueError:
-        return False
-
-
 class TaskExecutor:
     """Executes prompts through configured LLM workflows."""
 
-    DEFAULT_OLLAMA_BASE = "http://localhost:11434"
+    DEFAULT_OLLAMA_BASE = _DEFAULT_OLLAMA_BASE
 
     def __init__(
         self,
@@ -196,8 +145,12 @@ class TaskExecutor:
 
         workflow_cfg = workflows[request.workflow]
         timeout_cfg = self._config.llm.timeouts
-        provider_kwargs = self._build_provider_kwargs(workflow_cfg.provider)
-        model_identifier = self._resolve_model_name(workflow_cfg)
+        try:
+            model_identifier, provider_kwargs = resolve_provider_configuration(
+                workflow_cfg.provider, workflow_cfg.model
+            )
+        except ProviderRoutingError as exc:
+            raise WorkflowError(str(exc)) from None
 
         attempt = 0
         delay = timeout_cfg.retry_backoff_seconds
@@ -260,33 +213,11 @@ class TaskExecutor:
 
     def _build_provider_kwargs(self, provider: str) -> Dict[str, object]:
         """Prepare provider-specific keyword arguments for LiteLLM."""
-        if provider.lower() == "azure":
-            api_key = getenv("AZURE_OPENAI_API_KEY")
-            endpoint = getenv("AZURE_OPENAI_ENDPOINT")
-            api_version = getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
-            if not api_key or not endpoint:
-                raise WorkflowError(
-                    "Azure OpenAI credentials missing. Set AZURE_OPENAI_API_KEY and "
-                    "AZURE_OPENAI_ENDPOINT environment variables."
-                )
-            base = endpoint.rstrip("/")
-            return {
-                "api_key": api_key,
-                "api_base": base,
-                "base_url": base,
-                "api_version": api_version,
-                "custom_llm_provider": "azure",
-            }
-
-        if provider.lower() == "ollama":
-            base_url = self._resolve_ollama_base_url()
-            return {
-                "base_url": base_url,
-                "api_base": base_url,
-                "custom_llm_provider": "ollama",
-            }
-
-        return {}
+        try:
+            _, provider_kwargs = resolve_provider_configuration(provider, "")
+        except ProviderRoutingError as exc:
+            raise WorkflowError(str(exc)) from None
+        return provider_kwargs
 
     @staticmethod
     def _redact_sensitive(payload: Dict[str, object]) -> Dict[str, object]:
@@ -321,36 +252,8 @@ class TaskExecutor:
 
     def _resolve_model_name(self, workflow_cfg: WorkflowModelConfig) -> str:
         """Normalise provider-specific model identifiers for LiteLLM."""
-        model_name = workflow_cfg.model
-        provider = workflow_cfg.provider.lower()
-
-        if provider == "azure":
-            if model_name.startswith("azure/"):
-                return model_name
-            return f"azure/{model_name}"
-
-        if provider == "ollama":
-            if model_name.startswith(("ollama/", "ollama_chat/")):
-                return model_name
-            return f"ollama/{model_name}"
-
-        return model_name
+        return resolve_provider_model(workflow_cfg.provider, workflow_cfg.model)
 
     def _resolve_ollama_base_url(self) -> str:
         """Resolve the Ollama base URL with WSL host detection fallback."""
-
-        provided = getenv("OLLAMA_BASE_URL")
-        if provided:
-            base_url = provided.rstrip("/")
-            self._logger.debug("Using OLLAMA_BASE_URL override: %s", base_url)
-            return base_url
-
-        detected_host = _detect_windows_host_ip()
-        if detected_host:
-            base_url = f"http://{detected_host}:11434"
-            self._logger.debug(
-                "Detected Windows host IP %s for Ollama base URL.", detected_host
-            )
-            return base_url
-
-        return self.DEFAULT_OLLAMA_BASE
+        return resolve_ollama_base_url()

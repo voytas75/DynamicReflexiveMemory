@@ -17,7 +17,8 @@ import pytest
 
 from config import settings
 from core.exceptions import WorkflowError
-from core.task_executor import TaskExecutor, _detect_windows_host_ip, _is_ipv4
+from core.provider_routing import _detect_windows_host_ip, _is_ipv4
+from core.task_executor import TaskExecutor
 from models.workflows import TaskRequest
 
 
@@ -81,7 +82,7 @@ def test_resolve_ollama_base_url_detects_wsl_host(
 ) -> None:
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.setattr(
-        "core.task_executor._detect_windows_host_ip", lambda: "172.31.52.230"
+        "core.provider_routing._detect_windows_host_ip", lambda: "172.31.52.230"
     )
     base_url = task_executor._resolve_ollama_base_url()
     assert base_url == "http://172.31.52.230:11434"
@@ -91,7 +92,7 @@ def test_resolve_ollama_base_url_falls_back_to_localhost(
     task_executor: TaskExecutor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
-    monkeypatch.setattr("core.task_executor._detect_windows_host_ip", lambda: None)
+    monkeypatch.setattr("core.provider_routing._detect_windows_host_ip", lambda: None)
     base_url = task_executor._resolve_ollama_base_url()
     assert base_url == TaskExecutor.DEFAULT_OLLAMA_BASE
 
@@ -162,7 +163,11 @@ def test_provider_kwargs_redact_azure_credentials(
     assert redacted["api_key"] == "***redacted***"
 
 
-def test_resolve_model_name_adds_provider_prefix(task_executor: TaskExecutor) -> None:
+def test_resolve_model_name_adds_provider_prefix(
+    task_executor: TaskExecutor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
     azure_cfg = settings.WorkflowModelConfig(
         provider="azure",
         model="gpt-4.1",
@@ -217,6 +222,9 @@ def test_execute_returns_result_with_redacted_metadata(
 
     assert result.content == "ok"
     assert captured["model"] == "ollama/gemma3:1b"
+    assert captured["base_url"] == "http://localhost:11434"
+    assert captured["api_base"] == "http://localhost:11434"
+    assert captured["custom_llm_provider"] == "ollama"
     assert result.metadata["provider"] == "ollama"
 
 
@@ -327,7 +335,7 @@ def test_detect_windows_host_ip(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(builtins, "open", _open)
     monkeypatch.setattr(
-        "core.task_executor.subprocess.run",
+        "core.provider_routing.subprocess.run",
         lambda *_, **__: SimpleNamespace(
             returncode=0,
             stdout="ignored line\ndefault via 172.20.80.1 dev eth0\n",
