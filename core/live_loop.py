@@ -299,7 +299,14 @@ class LiveTaskLoop:
         if not definition:
             return True
 
-        recent_nodes = self._memory_manager.list_semantic_nodes(limit=3)
+        try:
+            recent_nodes = self._memory_manager.list_semantic_nodes(limit=3)
+        except MemoryError as exc:
+            self._logger.error(
+                "Failed to read semantic memory for summary (error_type=%s).",
+                type(exc).__name__,
+            )
+            return False
 
         node = SemanticNode(
             id=f"concept:{request.task_id}",
