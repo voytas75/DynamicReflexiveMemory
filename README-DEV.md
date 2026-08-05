@@ -38,7 +38,11 @@
 
    # CLI/task runner
    uv run python main.py --mode cli --task "Draft integration plan" --feedback "Looks good"
+
+   # Explicit raw output for a trusted local terminal only
+   uv run python main.py --mode cli --task "Draft integration plan" --show-result
    ```
+   CLI workflow failures return a non-zero exit code. Default console logs remain redacted; `--show-result` is an explicit opt-in that writes raw task output to stdout.
 
 ## Configuration & Secrets
 - Copy `config/config.example.json` to `config/config.json` and update provider credentials before first run.
