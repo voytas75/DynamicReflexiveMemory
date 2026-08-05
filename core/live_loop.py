@@ -12,6 +12,8 @@ Updates:
     v0.8 - 2026-08-05 - Narrowed hydrated review payload collections for strict Pyright.
     v0.9 - 2026-08-05 - Return explicit partial persistence outcomes and
         skip automatic mitigation after a primary persistence failure.
+    v0.10 - 2026-08-05 - Mark process-local Chroma fallback as partial rather
+        than reporting non-durable long-term memory as complete.
 """
 
 from __future__ import annotations
@@ -171,6 +173,8 @@ class LiveTaskLoop:
             payload=result_payload,
         ):
             persistence_failures.append("working:result")
+        if not self._memory_manager.long_term_memory_is_durable:
+            persistence_failures.append("long_term_memory:volatile")
 
         drift_advisory: Optional[str] = None
         mitigation_summary: Optional[Dict[str, object]] = None

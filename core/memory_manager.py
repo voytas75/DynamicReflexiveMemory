@@ -15,6 +15,8 @@ Updates:
     v0.12 - 2026-08-05 - Added strict Pyright-safe Chroma response and payload narrowing.
     v0.13 - 2026-08-05 - Preserved Redis fallback TTL and outage writes across reconnect.
     v0.14 - 2026-08-05 - Extracted revision logging into core.memory_revisions.
+    v0.15 - 2026-08-05 - Exposed durable long-term storage state so callers cannot
+        report process-local Chroma fallback as a complete persistence success.
 """
 
 from __future__ import annotations
@@ -364,6 +366,11 @@ class ChromaMemoryStore:
             )
             self._client = None
 
+    @property
+    def is_durable(self) -> bool:
+        """Return whether long-term records currently write to persistent Chroma."""
+        return self._collection is not None
+
     def _build_embedding_function(self, config: AppConfig) -> Optional[object]:
         """Construct the embedding function if configuration allows."""
         embedding_cfg = config.embedding
@@ -697,6 +704,11 @@ class MemoryManager:
         self._chroma_store = ChromaMemoryStore(config)
         self._logger = LOGGER
         self._revision_logger = MemoryRevisionLogger()
+
+    @property
+    def long_term_memory_is_durable(self) -> bool:
+        """Return whether episodic, semantic, review, and analytics writes persist."""
+        return self._chroma_store.is_durable
 
     def put_working_item(self, item: WorkingMemoryItem) -> None:
         """Store a working memory item with error handling."""
