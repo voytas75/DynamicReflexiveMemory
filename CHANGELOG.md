@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Changed
+- Malformed, missing, or unavailable automated-review verdicts now produce `unverified` instead of a passing review; disabled review remains explicitly `skipped`.
 - Documented and enabled `uv`-based local setup/workflow commands in README files and CI dependency installation.
 - Bound Redis and Ollama Docker ports to loopback and pinned Ollama to `0.32.5`.
 - Redacted CLI output and memory revision logs by default; raw revision payloads now require an explicit local opt-in.

@@ -303,6 +303,22 @@ def test_automated_review_without_model_returns_none(tmp_path: Path) -> None:
     assert review is None
 
 
+def test_perform_review_marks_missing_automated_review_unverified(
+    tmp_path: Path,
+) -> None:
+    config = _load_sample_config(tmp_path)
+    config.review.auto_reviewer_model = None
+    engine = ReviewEngine(config)
+
+    review = engine.perform_review(
+        TaskRequest(workflow="fast", prompt="demo"),
+        TaskResult(workflow="fast", content="ok", latency_seconds=0.1),
+    )
+
+    assert review.verdict == "unverified"
+    assert review.auto_verdict is None
+
+
 def test_automated_review_requires_litellm(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -348,7 +364,9 @@ def test_automated_review_timeout_returns_timeout_review(
 def test_review_helpers_normalise_values() -> None:
     assert ReviewEngine._normalise_verdict("approve") == "pass"
     assert ReviewEngine._normalise_verdict("reject") == "fail-auto"
-    assert ReviewEngine._normalise_verdict("needs-work") == "needs-work"
+    assert ReviewEngine._normalise_verdict(None) == "unverified"
+    assert ReviewEngine._normalise_verdict("needs-work") == "unverified"
+    assert ReviewEngine._normalise_verdict("timeout") == "unverified"
     assert ReviewEngine._resolve_temperature("azure/gpt-4.1") == pytest.approx(0.0)
     assert ReviewEngine._extract_float("score: 0.82 / 1") == pytest.approx(0.82)
     assert ReviewEngine._normalise_bullet("1) Fix issue") == "Fix issue"

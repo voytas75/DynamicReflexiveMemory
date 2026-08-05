@@ -187,14 +187,15 @@ class ReviewEngine:
 
     @staticmethod
     def _normalise_verdict(raw_verdict: Optional[str]) -> str:
+        """Return a resolved verdict only for accepted automated-review values."""
         if not raw_verdict:
-            return "pass"
+            return "unverified"
         verdict = raw_verdict.strip().lower()
         if verdict in {"pass", "passed", "approve"}:
             return "pass"
         if verdict in {"fail", "failed", "reject"}:
             return "fail-auto"
-        return verdict
+        return "unverified"
 
     @staticmethod
     def _resolve_temperature(model_name: str) -> float:
