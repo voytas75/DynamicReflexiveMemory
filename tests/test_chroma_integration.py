@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from config.settings import load_app_config
-from core.memory_manager import MemoryManager
+from core.memory_manager import ChromaMemoryStore, MemoryManager
 from models.memory import SemanticNode
 
 
@@ -81,3 +81,43 @@ def test_semantic_roundtrip_with_chroma_stub(
     retrieved = manager.get_semantic_node(node.id)
     assert retrieved is not None
     assert retrieved.id == node.id
+
+
+class _DeterministicEmbeddingFunction:
+    """Provide stable local vectors without contacting an embedding provider."""
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        return [[float(len(text)), 1.0] for text in input]
+
+
+@pytest.mark.integration
+def test_semantic_roundtrip_with_real_chroma(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    embedding = _DeterministicEmbeddingFunction()
+    monkeypatch.setattr(
+        ChromaMemoryStore,
+        "_build_embedding_function",
+        lambda _self, _config: embedding,
+    )
+
+    config = load_app_config()
+    config.memory.chromadb.persist_directory = str(tmp_path / "chroma")
+    first_manager = MemoryManager(config)
+    first_manager.record_semantic(
+        SemanticNode(
+            id="concept:real",
+            label="Real Chroma",
+            definition="Persisted through ChromaDB.",
+        )
+    )
+
+    assert first_manager._chroma_store._collection is not None
+
+    second_manager = MemoryManager(config)
+    persisted = second_manager.get_semantic_node("concept:real")
+
+    assert persisted is not None
+    assert persisted.definition == "Persisted through ChromaDB."

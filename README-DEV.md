@@ -7,6 +7,11 @@
 - Local runtime first; external providers are optional and configured through environment variables or `config/config.json`.
 - `uv` is supported for environment creation, installs, and command execution; plain `pip`/`venv` remains valid.
 
+## Versioning
+- The package-release source of truth is `[project].version` in `pyproject.toml` (currently `0.1.0`).
+- The `version` key in `config/config.example.json` is preserved configuration-document data; it is not a package-release version.
+- Changelog entries `0.1.1`–`0.1.9` are historical development milestones, not tagged or GitHub-released packages. Create a deliberate version bump and Git tag together for the next release.
+
 ## Environment & Tooling
 - Target interpreter: **Python 3.12**; create a dedicated virtual environment per workspace.
 - Linting and formatting: Ruff (`ruff check` and `ruff format`).
@@ -75,6 +80,7 @@
   ```
 - Without `uv`, run the same commands directly from the activated virtualenv.
 - Favor `hypothesis` strategies for boundary inputs (long prompts, Unicode edge cases, malformed JSON payloads).
+- Redis acceptance provisions a temporary Docker container on a dynamically assigned loopback port; real Chroma acceptance uses a temporary persistence directory and a deterministic local embedding function, so neither test requires a provider or project data.
 - Mock outbound HTTP/database calls with `pytest-mock`, `vcrpy`, or async test clients to keep suites deterministic.
 - Keep coverage ≥85% on core logic modules; justify exceptions in PR descriptions if temporary.
 
@@ -82,10 +88,12 @@
 - **Memory Revision Log**: mutations append redacted audit records to `data/logs/memory_revisions.jsonl`; use `DRM_MEMORY_LOG_PATH` to override for CI. Each application initialization atomically prunes records older than 30 days, discards malformed entries, and re-chains the retained log. Set `DRM_MEMORY_AUDIT_LOG_MODE=full` only for a trusted local audit session that explicitly requires raw payload replay.
 - **Semantic Graph**: embeddings and relationship weights live in ChromaDB. Drift mitigation routines decay weights to prioritize fresh context.
 - **Drift Analytics**: every controller run records latency, verdicts, mitigation plans, and SLO breaches. Access programmatically via `MemoryManager.list_drift_analytics()` or inspect in the GUI Drift Trends tab.
+- **Prompt trust boundary**: retrieved working, episodic, semantic, relation, and review records are rendered as untrusted reference data and bounded to 6,000 characters; the current task instruction remains separate.
 - **Observability**: extend `drm.metrics` and `drm.span` loggers for custom sinks. CLI logs retain execution metadata but omit prompts, results, feedback, and review text by default. Wrap external I/O with timeout-aware calls and surface actionable exception messages.
 
 ## CI & Automation
 - GitHub Actions workflow `.github/workflows/ci.yml` runs `uv sync --all-extras --frozen` and then Ruff plus strict Pyright on each push/PR.
+- `.github/workflows/codeql.yml` analyzes Python on pushes and pull requests; it is initially observational rather than a required merge check.
 - Runtime dependencies are pinned in both `pyproject.toml` and `requirements.txt`; audit transitive dependencies regularly.
 - Local CI-like verification can be run through `uv run --all-extras --frozen` after a frozen sync.
 
@@ -100,6 +108,6 @@
 - Settings editor inside the GUI allows on-the-fly config adjustments that persist across sessions (window size, workflow preference, etc.).
 
 ## Roadmap
-1. Redis integration tests using docker-compose fixtures.
+1. Harden real provider acceptance with redacted, case-specific evidence.
 2. WebSocket exposure for telemetry feed to enable external dashboards.
 3. CLI/webhook exports for drift analytics to plug into monitoring pipelines.
