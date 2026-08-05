@@ -14,11 +14,9 @@
 - Testing stack: `pytest`, `pytest-asyncio`, `pytest-cov`, `hypothesis`, and `vcrpy` for HTTP fixtures.
 
 ## Detailed Getting Started
-1. **Create and activate the virtual environment**
+1. **Create the synchronized developer environment**
    ```bash
-   uv venv
-   source .venv/bin/activate
-   uv pip install -e ".[dev]"
+   uv sync --all-extras --frozen
    ```
    Fallback without `uv`:
    ```bash
@@ -63,10 +61,10 @@
 ## Testing & Quality Gates
 - Install dev requirements and run the full gate before merging:
   ```bash
-  uv run pytest --cov --cov-fail-under=85 --disable-warnings -q
-  uv run mypy .
-  uv run ruff check .
-  uv run black --check .
+  uv run --all-extras --frozen pytest --cov --cov-fail-under=85 --disable-warnings -q
+  uv run --all-extras --frozen mypy .
+  uv run --all-extras --frozen ruff check .
+  uv run --all-extras --frozen black --check .
   ```
 - Without `uv`, run the same commands directly from the activated virtualenv.
 - Favor `hypothesis` strategies for boundary inputs (long prompts, Unicode edge cases, malformed JSON payloads).
@@ -80,9 +78,9 @@
 - **Observability**: extend `drm.metrics` and `drm.span` loggers for custom sinks. CLI logs retain execution metadata but omit prompts, results, feedback, and review text by default. Wrap external I/O with timeout-aware calls and surface actionable exception messages.
 
 ## CI & Automation
-- GitHub Actions workflow `.github/workflows/ci.yml` installs `.[dev]` and runs pytest coverage, mypy, Ruff, and Black checks on each push/PR.
+- GitHub Actions workflow `.github/workflows/ci.yml` runs `uv sync --all-extras --frozen` and then pytest coverage, mypy, Ruff, and Black checks on each push/PR.
 - Runtime dependencies are pinned in both `pyproject.toml` and `requirements.txt`; audit transitive dependencies regularly.
-- Local CI-like verification can be run through `uv run` after `uv pip install -e ".[dev]"`.
+- Local CI-like verification can be run through `uv run --all-extras --frozen` after a frozen sync.
 
 ## Utilities
 - **Memory Seeding**: run `python scripts/seed_memory.py` to populate demo working/episodic/semantic/review entries for GUI demos.
