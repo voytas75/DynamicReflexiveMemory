@@ -4,6 +4,7 @@ Updates:
     v0.1 - 2025-11-06 - Added runtime checks for Redis, ChromaDB, litellm, and
         credential prerequisites with informative warnings.
     v0.2 - 2025-11-07 - Treated configured Azure embedding deployments as valid.
+    v0.3 - 2026-08-05 - Simplified LiteLLM package availability typing.
 """
 
 from __future__ import annotations
@@ -85,16 +86,11 @@ def _check_chromadb(config: AppConfig) -> List[str]:
 
 def _check_litellm() -> List[str]:
     try:
-        import litellm  # noqa: F401
-    except ImportError:
+        installed = metadata.version("litellm")
+    except metadata.PackageNotFoundError:
         raise HealthCheckError(
             "litellm is required for workflow execution but is missing."
         )
-
-    try:
-        installed = metadata.version("litellm")
-    except metadata.PackageNotFoundError:
-        return []
 
     expected = "1.83.14"
     if installed != expected:

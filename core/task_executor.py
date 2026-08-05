@@ -11,6 +11,7 @@ Updates:
     v0.7 - 2025-11-07 - Added explicit Ollama provider hints for LiteLLM routing.
     v0.8 - 2025-11-07 - Emitted detailed error context when workflows fail.
     v0.9 - 2025-11-07 - Auto-detected Ollama base URL when running under WSL.
+    v1.0 - 2026-08-05 - Made workflow failure exception state explicit for strict typing.
 """
 
 from __future__ import annotations
@@ -197,6 +198,7 @@ class TaskExecutor:
         model_identifier = self._resolve_model_name(workflow_cfg)
 
         attempt = 0
+        last_exc: Exception | None = None
         delay = timeout_cfg.retry_backoff_seconds
         start_time = time.perf_counter()
 
@@ -255,7 +257,7 @@ class TaskExecutor:
 
         latency = time.perf_counter() - start_time
         message = f"Workflow '{request.workflow}' failed after {attempt} attempts."
-        if "last_exc" in locals():
+        if last_exc is not None:
             raise WorkflowError(f"{message} Last error: {last_exc}") from last_exc
         raise WorkflowError(message)
 

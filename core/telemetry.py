@@ -3,6 +3,7 @@
 Updates:
     v0.1 - 2025-11-07 - Provided logging wrappers for metrics and spans.
     v0.2 - 2025-11-08 - Added in-process telemetry feed for GUI consumption.
+    v0.3 - 2026-08-05 - Updated span context manager typing for strict Pyright.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from queue import Empty, Queue
 from threading import Lock
-from typing import Deque, Dict, Iterator, List, Optional
+from typing import Deque, Dict, Generator, List, Optional
 
 _METRICS_LOGGER = logging.getLogger("drm.metrics")
 _SPAN_LOGGER = logging.getLogger("drm.span")
@@ -114,7 +115,7 @@ def emit_metric(name: str, value: float = 1.0, **tags: object) -> None:
 
 
 @contextmanager
-def log_span(name: str, **fields: object) -> Iterator[None]:
+def log_span(name: str, **fields: object) -> Generator[None, None, None]:
     """Log a start/end span around a block of work."""
     start = time.perf_counter()
     _SPAN_LOGGER.debug(

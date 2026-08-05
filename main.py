@@ -7,6 +7,7 @@ Updates:
     v0.4 - 2025-11-07 - Loaded environment variables from .env during startup.
     v0.5 - 2025-11-07 - Captured optional human review feedback in CLI workflows.
     v0.6 - 2025-11-07 - Persisted workflow preference and window state between sessions.
+    v0.7 - 2026-08-05 - Added explicit CLI result output and non-zero workflow failure status.
 """
 
 from __future__ import annotations
@@ -44,8 +45,21 @@ def run_cli(
     workflow: Optional[str] = None,
     human_feedback: Optional[str] = None,
     user_settings: Optional[UserSettingsManager] = None,
-) -> None:
-    """Run a simple CLI workflow as a fallback when GUI is unavailable."""
+    show_result: bool = False,
+) -> int:
+    """Run a CLI workflow and return a process-compatible exit code.
+
+    Args:
+        config: Validated application configuration.
+        task: Optional task prompt for the selected workflow.
+        workflow: Optional workflow override.
+        human_feedback: Optional human review feedback.
+        user_settings: Optional persisted user settings.
+        show_result: Print raw task output to stdout only when explicitly enabled.
+
+    Returns:
+        Zero on successful execution and one when DRM workflow execution fails.
+    """
     logger = logging.getLogger("drm.cli")
     task_loop = LiveTaskLoop(config, user_settings=user_settings)
     prompt_text = task or "Summarise today's objectives based on existing memory."
@@ -65,7 +79,7 @@ def run_cli(
             )
         else:
             logger.error("Task execution failed; no task result was produced.")
-        return
+        return 1
 
     logger.info(
         "Executed workflow '%s' (score=%.2f)",
@@ -90,6 +104,9 @@ def run_cli(
         logger.warning("Controller advisory generated.")
     if outcome.mitigation_summary:
         logger.info("Mitigation actions recorded.")
+    if show_result:
+        print(outcome.result.content)
+    return 0
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -106,6 +123,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument(
         "--feedback", type=str, help="Optional human review feedback for the task."
+    )
+    parser.add_argument(
+        "--show-result",
+        action="store_true",
+        help="Print raw task output to stdout; use only in a trusted terminal.",
     )
     args = parser.parse_args(argv)
 
@@ -139,23 +161,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         if gui_result is not None:
             return gui_result
         logging.getLogger("drm").info("Falling back to CLI mode.")
-        run_cli(
+        return run_cli(
             config,
             args.task,
             args.workflow,
             args.feedback,
             user_settings=user_settings,
+            show_result=args.show_result,
         )
-        return 0
 
-    run_cli(
+    return run_cli(
         config,
         args.task,
         args.workflow,
         args.feedback,
         user_settings=user_settings,
+        show_result=args.show_result,
     )
-    return 0
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ Updates:
     v0.1 - 2025-11-06 - Added AdaptivePromptEngine with memory-aware prompt
         composition and drift annotations.
     v0.2 - 2025-11-07 - Included semantic relation summaries in generated prompts.
+    v0.3 - 2026-08-05 - Typed prompt context defaults and review formatting accumulators.
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ class PromptContext:
     episodic_memory: Sequence[Dict[str, object]]
     semantic_memory: Sequence[Dict[str, object]]
     recent_reviews: List[ReviewRecord]
-    semantic_relations: Dict[str, List[Dict[str, object]]] = field(default_factory=dict)
+    semantic_relations: Dict[str, List[Dict[str, object]]] = field(
+        default_factory=dict[str, List[Dict[str, object]]]
+    )
     drift_indicator: Optional[str] = None
 
 
@@ -58,10 +61,12 @@ class AdaptivePromptEngine:
             context.task.strip(),
         ]
         if context.drift_indicator:
-            prompt_sections.append(dedent(f"""
+            prompt_sections.append(
+                dedent(f"""
                     ### Drift Advisory
                     {context.drift_indicator.strip()}
-                    """).strip())
+                    """).strip()
+            )
         return "\n\n".join(section for section in prompt_sections if section)
 
     def _format_header(self, context: PromptContext) -> str:
@@ -133,7 +138,7 @@ class AdaptivePromptEngine:
     def _format_reviews(reviews: List[ReviewRecord]) -> str:
         if not reviews:
             return ""
-        formatted_lines = []
+        formatted_lines: List[str] = []
         for record in reviews:
             details = record.notes or "n/a"
             if record.quality_score is not None:
