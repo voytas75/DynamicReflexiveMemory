@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Changed
+- Bound retrieved-memory prompt context to 6,000 characters and label it as untrusted reference data; the direct task instruction remains separate.
 - Malformed, missing, or unavailable automated-review verdicts now produce `unverified` instead of a passing review; disabled review remains explicitly `skipped`.
 - Documented and enabled `uv`-based local setup/workflow commands in README files and CI dependency installation.
 - Bound Redis and Ollama Docker ports to loopback and pinned Ollama to `0.32.5`.
