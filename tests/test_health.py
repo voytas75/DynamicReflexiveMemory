@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from config import settings
-from core.health import run_startup_checks
+from core.health import _check_litellm, run_startup_checks
 
 
 def _load_config(tmp_path: Path) -> settings.AppConfig:
@@ -37,13 +37,17 @@ def _install_stub_modules(
 
     redis_module = types.SimpleNamespace(Redis=_RedisClient)
     chroma_module = _build_chroma_stub(tmp_path)
-    litellm_module = types.SimpleNamespace(__version__="1.83.14")
+    litellm_module = types.SimpleNamespace(__version__="1.84.0")
 
     monkeypatch.setitem(sys.modules, "redis", redis_module)
     monkeypatch.setitem(sys.modules, "chromadb", chroma_module)
     monkeypatch.setitem(sys.modules, "litellm", litellm_module)
 
-    monkeypatch.setattr("core.health.metadata.version", lambda _: "1.83.14")
+    monkeypatch.setattr("core.health.metadata.version", lambda _: "1.84.0")
+    monkeypatch.setattr(
+        "core.health.metadata.requires",
+        lambda _: ["litellm==1.84.0"],
+    )
 
 
 def _build_chroma_stub(tmp_path: Path) -> types.SimpleNamespace:
@@ -71,6 +75,30 @@ def test_health_checks_with_stubbed_dependencies(
 
     warnings = run_startup_checks(config)
     assert warnings == []
+
+
+def test_litellm_health_check_uses_package_dependency_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("core.health.metadata.version", lambda _: "1.84.0")
+    monkeypatch.setattr(
+        "core.health.metadata.requires",
+        lambda _: ["litellm==1.84.0"],
+    )
+
+    assert _check_litellm() == []
+
+
+def test_litellm_health_warns_on_genuine_metadata_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("core.health.metadata.version", lambda _: "1.83.14")
+    monkeypatch.setattr(
+        "core.health.metadata.requires",
+        lambda _: ["litellm==1.84.0"],
+    )
+
+    assert _check_litellm() == ["litellm version 1.83.14 detected; expected 1.84.0."]
 
 
 def test_health_checks_warn_on_redis_failure(

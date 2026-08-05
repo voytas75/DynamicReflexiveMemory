@@ -9,6 +9,8 @@ The package version source of truth is `[project].version` in `pyproject.toml` (
 ## [Unreleased]
 
 ### Changed
+- Startup health now reads the exact LiteLLM pin from installed DRM package dependency metadata, eliminating the stale local `1.83.14` expectation while retaining warnings for a genuine version mismatch or unavailable metadata.
+- Default workflow and automated-review failure logs now retain only safe stage, attempt, and exception-class labels; raw provider errors, tracebacks, and exception chains no longer enter default logs or domain exceptions.
 - Process-local Chroma fallback now returns `partial` persistence with the safe boundary `long_term_memory:volatile`, CLI exit code `2`, and no controller/mitigation side effects; the fallback remains available only until process exit.
 - GUI now surfaces `partial` persistence outcomes in its status and Recent Outputs views using only safe failed-boundary labels; Qt fallback and real offscreen initialisation are covered by local regression tests.
 - Task runs now surface incomplete persistence as a `partial` outcome with CLI exit code `2`; primary persistence failure skips automatic drift mitigation and reports only failed storage boundaries for remediation/retry.

@@ -12,6 +12,8 @@ Updates:
     v0.8 - 2025-11-07 - Emitted detailed error context when workflows fail.
     v0.9 - 2025-11-07 - Auto-detected Ollama base URL when running under WSL.
     v1.0 - 2026-08-05 - Made workflow failure exception state explicit for strict typing.
+    v1.1 - 2026-08-05 - Redacted provider failure details from default logs and
+        workflow exceptions.
 """
 
 from __future__ import annotations
@@ -198,7 +200,6 @@ class TaskExecutor:
         model_identifier = self._resolve_model_name(workflow_cfg)
 
         attempt = 0
-        last_exc: Exception | None = None
         delay = timeout_cfg.retry_backoff_seconds
         start_time = time.perf_counter()
 
@@ -237,29 +238,25 @@ class TaskExecutor:
                 )
             except litellm.Timeout as exc:
                 self._logger.warning(
-                    "Workflow '%s' timed out (attempt %s): %s",
+                    "Workflow '%s' timed out (attempt %s; error_type=%s).",
                     request.workflow,
                     attempt,
-                    exc,
+                    type(exc).__name__,
                 )
             except Exception as exc:  # pragma: no cover - runtime failure
                 self._logger.error(
-                    "Workflow '%s' failed (attempt %s): %s",
+                    "Workflow '%s' failed (attempt %s; error_type=%s).",
                     request.workflow,
                     attempt,
-                    exc,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
-                last_exc = exc
                 break
 
             time.sleep(delay)
 
         latency = time.perf_counter() - start_time
         message = f"Workflow '{request.workflow}' failed after {attempt} attempts."
-        if last_exc is not None:
-            raise WorkflowError(f"{message} Last error: {last_exc}") from last_exc
-        raise WorkflowError(message)
+        raise WorkflowError(message) from None
 
     def _build_provider_kwargs(self, provider: str) -> Dict[str, object]:
         """Prepare provider-specific keyword arguments for LiteLLM."""

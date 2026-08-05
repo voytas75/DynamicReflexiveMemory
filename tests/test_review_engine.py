@@ -7,6 +7,7 @@ Updates: v0.2 - 2026-05-11 - Added review disabled, timeout, and human feedback 
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -335,8 +336,11 @@ def test_automated_review_requires_litellm(
 
 
 def test_automated_review_timeout_returns_timeout_review(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    marker = "review-timeout-prompt-marker"
     config = _load_sample_config(tmp_path)
     config.review.auto_reviewer_model = "review-model"
     config.review.auto_reviewer_provider = "ollama"
@@ -345,12 +349,13 @@ def test_automated_review_timeout_returns_timeout_review(
         """Placeholder timeout exception."""
 
     def _completion(**_: object) -> dict[str, object]:
-        raise DummyTimeout("slow")
+        raise DummyTimeout(marker)
 
     dummy_litellm = SimpleNamespace(completion=_completion, Timeout=DummyTimeout)
     monkeypatch.setattr("core.review.litellm", dummy_litellm)
 
     engine = ReviewEngine(config)
+    caplog.set_level(logging.WARNING, logger="drm.review")
     automated = engine._run_automated_review(
         TaskRequest(workflow="fast", prompt="demo"),
         TaskResult(workflow="fast", content="ok", latency_seconds=0.1),
@@ -359,6 +364,43 @@ def test_automated_review_timeout_returns_timeout_review(
     assert automated is not None
     assert automated.verdict == "timeout"
     assert automated.suggestions == ["Automated review timed out."]
+    assert marker not in caplog.text
+    assert "error_type=DummyTimeout" in caplog.text
+
+
+def test_automated_review_redacts_provider_failure_details(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    marker = "review-provider-result-and-secret-marker"
+    config = _load_sample_config(tmp_path)
+    config.review.auto_reviewer_model = "review-model"
+    config.review.auto_reviewer_provider = "ollama"
+
+    class ProviderFailure(Exception):
+        """Synthetic provider exception carrying sensitive-looking detail."""
+
+    def _completion(**_: object) -> dict[str, object]:
+        raise ProviderFailure(marker)
+
+    monkeypatch.setattr(
+        "core.review.litellm",
+        SimpleNamespace(completion=_completion, Timeout=TimeoutError),
+    )
+    engine = ReviewEngine(config)
+    caplog.set_level(logging.ERROR, logger="drm.review")
+
+    with pytest.raises(ReviewError, match="Automated review failed") as error:
+        engine._run_automated_review(
+            TaskRequest(workflow="fast", prompt="demo"),
+            TaskResult(workflow="fast", content="ok", latency_seconds=0.1),
+        )
+
+    assert marker not in caplog.text
+    assert marker not in str(error.value)
+    assert "error_type=ProviderFailure" in caplog.text
+    assert error.value.__cause__ is None
 
 
 def test_review_helpers_normalise_values() -> None:
