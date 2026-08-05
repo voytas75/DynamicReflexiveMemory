@@ -27,7 +27,7 @@ dev = [
     "pytest-mock==3.14.1",
     "pytest-xdist==3.6.1",
     "ruff==0.14.2",
-    "vcrpy==7.0.0",
+    "vcrpy==8.2.1",
 ]
 
 [tool.setuptools.packages.find]
