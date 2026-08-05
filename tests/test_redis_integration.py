@@ -1,21 +1,22 @@
-"""Integration-style tests exercising the Redis working memory store.
+"""Integration tests exercising Redis working-memory persistence.
 
 Updates:
-    v0.1 - 2025-11-08 - Added dockerised Redis coverage for TTL expiry,
+    v0.1 - 2025-11-08 - Added Dockerised Redis coverage for TTL expiry,
         reconnection, and fallback behaviour.
     v0.2 - 2026-08-05 - Added deterministic fallback TTL and reconnect migration
         coverage without a Docker dependency.
+    v0.3 - 2026-08-05 - Isolated real Redis tests on a dynamic loopback port.
 """
 
 from __future__ import annotations
 
 import shutil
-import socket
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 import pytest
 import redis
@@ -24,42 +25,90 @@ from config.settings import load_app_config
 from core.memory_manager import RedisMemoryStore
 from models.memory import WorkingMemoryItem
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-COMPOSE_FILE = PROJECT_ROOT / "docker-compose.yml"
-REDIS_SERVICE = "redis"
-TEST_REDIS_PORT = 6379
+REDIS_IMAGE = "redis:7.4-alpine"
+REDIS_CONTAINER_PORT = 6379
 
 
 class _RedisServiceController:
-    """Helper for managing the dockerised Redis service during tests."""
+    """Manage an isolated Redis container on a Docker-assigned loopback port."""
 
-    def __init__(self, compose_file: Path) -> None:
-        self._compose_file = compose_file
+    def __init__(self) -> None:
+        self._container_name = f"drm-test-redis-{uuid4().hex}"
+        self._port: int | None = None
 
-    def run(self, *args: str) -> None:
-        command = [
-            "docker",
-            "compose",
-            "-f",
-            str(self._compose_file),
-            *args,
-        ]
-        subprocess.run(command, check=True, cwd=str(PROJECT_ROOT))
+    @property
+    def port(self) -> int:
+        if self._port is None:
+            raise RuntimeError(
+                "Redis test port is unavailable before container startup."
+            )
+        return self._port
+
+    def run(
+        self, *args: str, capture_output: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["docker", *args],
+            check=True,
+            capture_output=capture_output,
+            text=True,
+        )
 
     def up(self) -> None:
-        self.run("up", "-d", REDIS_SERVICE)
+        self.run(
+            "run",
+            "--detach",
+            "--name",
+            self._container_name,
+            "--publish",
+            f"127.0.0.1::{REDIS_CONTAINER_PORT}",
+            REDIS_IMAGE,
+            "redis-server",
+            "--save",
+            "",
+            "--appendonly",
+            "no",
+        )
+        self._port = self._published_port()
+
+    def _published_port(self) -> int:
+        published = self.run(
+            "port",
+            self._container_name,
+            f"{REDIS_CONTAINER_PORT}/tcp",
+            capture_output=True,
+        ).stdout.strip()
+        if not published:
+            raise RuntimeError("Docker did not report a published Redis test port.")
+        try:
+            return int(published.rsplit(":", maxsplit=1)[1])
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Unexpected Docker port mapping: {published!r}"
+            ) from exc
 
     def stop(self) -> None:
-        self.run("stop", REDIS_SERVICE)
+        self.run("stop", self._container_name)
 
     def start(self) -> None:
-        self.run("start", REDIS_SERVICE)
+        self.run("start", self._container_name)
+        self._port = self._published_port()
 
     def down(self) -> None:
-        self.run("rm", "-sf", REDIS_SERVICE)
+        subprocess.run(
+            ["docker", "rm", "--force", self._container_name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
     def ensure_ready(self, timeout: float = 15.0) -> None:
-        client = redis.Redis(host="localhost", port=6379, db=5, socket_timeout=1)
+        client = redis.Redis(
+            host="127.0.0.1",
+            port=self.port,
+            db=5,
+            socket_timeout=1,
+        )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
@@ -67,46 +116,36 @@ class _RedisServiceController:
                     return
             except redis.exceptions.ConnectionError:
                 time.sleep(0.25)
-        raise RuntimeError("Redis service did not become ready in time")
+        raise RuntimeError(
+            "Isolated Redis test container did not become ready in time."
+        )
 
 
 @pytest.fixture(scope="module")
 def redis_service() -> Iterator[_RedisServiceController]:
     if shutil.which("docker") is None:
-        pytest.skip("Docker is required for Redis integration tests.")
-    if not COMPOSE_FILE.exists():
-        pytest.skip("docker-compose.yml not available for Redis integration tests.")
+        pytest.skip("Docker client is required for Redis integration tests.")
 
-    if _is_port_in_use("127.0.0.1", TEST_REDIS_PORT):
-        pytest.skip(
-            f"Port {TEST_REDIS_PORT} is already in use; stop the local Redis service or free the port before running integration tests."
-        )
-
-    controller = _RedisServiceController(COMPOSE_FILE)
-    controller.up()
+    controller = _RedisServiceController()
     try:
-        try:
-            controller.ensure_ready()
-        except RuntimeError as exc:
-            pytest.skip(str(exc))
+        controller.up()
+        controller.ensure_ready()
         yield controller
     finally:
         controller.down()
 
 
-def _is_port_in_use(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        result = sock.connect_ex((host, port))
-        return result == 0
-
-
 def _build_store(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ttl: int = 3
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    port: int,
+    ttl: int = 3,
 ) -> RedisMemoryStore:
     monkeypatch.setenv("DRM_MEMORY_LOG_PATH", str(tmp_path / "revisions.jsonl"))
     config = load_app_config()
-    config.memory.redis.port = TEST_REDIS_PORT
+    config.memory.redis.host = "127.0.0.1"
+    config.memory.redis.port = port
     config.memory.redis.ttl_seconds = ttl
     return RedisMemoryStore(config)
 
@@ -117,7 +156,7 @@ def test_redis_working_memory_ttl_expiry(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store = _build_store(monkeypatch, tmp_path, ttl=1)
+    store = _build_store(monkeypatch, tmp_path, port=redis_service.port, ttl=1)
     item = WorkingMemoryItem(
         key="ttl:test",
         payload={"value": "ephemeral"},
@@ -137,7 +176,7 @@ def test_redis_store_recovers_after_restart(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store = _build_store(monkeypatch, tmp_path)
+    store = _build_store(monkeypatch, tmp_path, port=redis_service.port)
 
     first_item = WorkingMemoryItem(
         key="reconnect:initial",
@@ -220,7 +259,7 @@ def test_redis_fallback_expires_items_without_redis(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr("core.memory_manager.redis_module", None)
-    store = _build_store(monkeypatch, tmp_path, ttl=1)
+    store = _build_store(monkeypatch, tmp_path, port=6390, ttl=1)
     expired = WorkingMemoryItem(
         key="fallback:expired",
         payload={"value": "stale"},
@@ -239,7 +278,7 @@ def test_redis_reconnect_migrates_live_fallback_items(
 ) -> None:
     redis_stub = _RecoveringRedisModule()
     monkeypatch.setattr("core.memory_manager.redis_module", redis_stub)
-    store = _build_store(monkeypatch, tmp_path, ttl=10)
+    store = _build_store(monkeypatch, tmp_path, port=6390, ttl=10)
     item = WorkingMemoryItem(
         key="fallback:recover",
         payload={"value": "preserved"},

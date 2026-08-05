@@ -75,6 +75,7 @@
   ```
 - Without `uv`, run the same commands directly from the activated virtualenv.
 - Favor `hypothesis` strategies for boundary inputs (long prompts, Unicode edge cases, malformed JSON payloads).
+- Redis acceptance provisions a temporary Docker container on a dynamically assigned loopback port; real Chroma acceptance uses a temporary persistence directory and a deterministic local embedding function, so neither test requires a provider or project data.
 - Mock outbound HTTP/database calls with `pytest-mock`, `vcrpy`, or async test clients to keep suites deterministic.
 - Keep coverage ≥85% on core logic modules; justify exceptions in PR descriptions if temporary.
 
@@ -101,6 +102,6 @@
 - Settings editor inside the GUI allows on-the-fly config adjustments that persist across sessions (window size, workflow preference, etc.).
 
 ## Roadmap
-1. Redis integration tests using docker-compose fixtures.
+1. Harden real provider acceptance with redacted, case-specific evidence.
 2. WebSocket exposure for telemetry feed to enable external dashboards.
 3. CLI/webhook exports for drift analytics to plug into monitoring pipelines.
