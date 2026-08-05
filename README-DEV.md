@@ -58,6 +58,7 @@
 | `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Overrides the default `text-embedding-3-large` embedding deployment. |
 | `OLLAMA_BASE_URL` | Points DRM to a remote/local Ollama instance (auto-detected on WSL2, but overridable). |
 | `DRM_MEMORY_LOG_PATH` | Repoints the memory revision log from `data/logs/memory_revisions.jsonl`. |
+| `DRM_MEMORY_AUDIT_LOG_MODE` | Defaults to `redacted`; set explicitly to `full` only when raw revision payloads and replay are required in a trusted local environment. |
 
 ## Testing & Quality Gates
 - Install dev requirements and run the full gate before merging:
@@ -73,10 +74,10 @@
 - Keep coverage ≥85% on core logic modules; justify exceptions in PR descriptions if temporary.
 
 ## Memory & Telemetry
-- **Memory Revision Log**: mutations append to `data/logs/memory_revisions.jsonl`; use `DRM_MEMORY_LOG_PATH` to override for CI. Treat the log as append-only for auditability.
+- **Memory Revision Log**: mutations append redacted audit records to `data/logs/memory_revisions.jsonl`; use `DRM_MEMORY_LOG_PATH` to override for CI. Each application initialization atomically prunes records older than 30 days, discards malformed entries, and re-chains the retained log. Set `DRM_MEMORY_AUDIT_LOG_MODE=full` only for a trusted local audit session that explicitly requires raw payload replay.
 - **Semantic Graph**: embeddings and relationship weights live in ChromaDB. Drift mitigation routines decay weights to prioritize fresh context.
 - **Drift Analytics**: every controller run records latency, verdicts, mitigation plans, and SLO breaches. Access programmatically via `MemoryManager.list_drift_analytics()` or inspect in the GUI Drift Trends tab.
-- **Observability**: extend `drm.metrics` and `drm.span` loggers for custom sinks. Wrap external I/O with timeout-aware calls and surface actionable exception messages.
+- **Observability**: extend `drm.metrics` and `drm.span` loggers for custom sinks. CLI logs retain execution metadata but omit prompts, results, feedback, and review text by default. Wrap external I/O with timeout-aware calls and surface actionable exception messages.
 
 ## CI & Automation
 - GitHub Actions workflow `.github/workflows/ci.yml` installs `.[dev]` and runs pytest coverage, mypy, Ruff, and Black checks on each push/PR.
