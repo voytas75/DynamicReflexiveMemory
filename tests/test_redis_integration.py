@@ -3,6 +3,8 @@
 Updates:
     v0.1 - 2025-11-08 - Added dockerised Redis coverage for TTL expiry,
         reconnection, and fallback behaviour.
+    v0.2 - 2026-08-05 - Added deterministic fallback TTL and reconnect migration
+        coverage without a Docker dependency.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import shutil
 import socket
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -180,3 +183,76 @@ def test_redis_fallback_store_when_unavailable(
     retrieved = store.get(item.key)
     assert retrieved is not None
     assert retrieved.payload == item.payload
+
+
+class _RecoveringRedisClient:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
+        self.fail_get = False
+
+    def ping(self) -> bool:
+        return True
+
+    def setex(self, *, name: str, time: int, value: str) -> None:
+        self.values[name] = value
+        self.ttls[name] = time
+
+    def get(self, key: str) -> bytes | None:
+        if self.fail_get:
+            raise OSError("Redis unavailable")
+        value = self.values.get(key)
+        return value.encode("utf-8") if value is not None else None
+
+
+class _RecoveringRedisModule:
+    def __init__(self) -> None:
+        self.available = False
+        self.client = _RecoveringRedisClient()
+
+    def Redis(self, **_: object) -> _RecoveringRedisClient:
+        if not self.available:
+            raise OSError("Redis unavailable")
+        return self.client
+
+
+def test_redis_fallback_expires_items_without_redis(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("core.memory_manager.redis_module", None)
+    store = _build_store(monkeypatch, tmp_path, ttl=1)
+    expired = WorkingMemoryItem(
+        key="fallback:expired",
+        payload={"value": "stale"},
+        ttl_seconds=1,
+        created_at=datetime.now(timezone.utc) - timedelta(seconds=2),
+    )
+
+    store.put(expired)
+
+    assert store.get(expired.key) is None
+    assert store.list_items() == []
+
+
+def test_redis_reconnect_migrates_live_fallback_items(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    redis_stub = _RecoveringRedisModule()
+    monkeypatch.setattr("core.memory_manager.redis_module", redis_stub)
+    store = _build_store(monkeypatch, tmp_path, ttl=10)
+    item = WorkingMemoryItem(
+        key="fallback:recover",
+        payload={"value": "preserved"},
+        ttl_seconds=10,
+    )
+    store.put(item)
+
+    redis_stub.available = True
+
+    recovered = store.get(item.key)
+
+    assert recovered is not None
+    assert recovered.payload == item.payload
+    assert 1 <= redis_stub.client.ttls[item.key] <= item.ttl_seconds
+    redis_stub.client.fail_get = True
+    assert store.get(item.key) is None

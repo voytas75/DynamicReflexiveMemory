@@ -13,6 +13,7 @@ Updates:
     v0.10 - 2026-05-11 - Tightened metric payload typing and JSON score/latency coercion for strict mypy.
     v0.11 - 2026-08-05 - Added atomic 30-day retention for revision logs.
     v0.12 - 2026-08-05 - Added strict Pyright-safe Chroma response and payload narrowing.
+    v0.13 - 2026-08-05 - Preserved Redis fallback TTL and outage writes across reconnect.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import tempfile
 from difflib import SequenceMatcher
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, cast
@@ -428,7 +430,11 @@ class RedisMemoryStore:
                 )
                 self._client = None
 
-        return self._fallback.get(key)
+        item = self._fallback.get(key)
+        if item is not None and self._remaining_ttl_seconds(item) == 0:
+            self._fallback.pop(key, None)
+            return None
+        return item
 
     def delete(self, key: str) -> None:
         """Remove an item from working memory if present."""
@@ -485,6 +491,9 @@ class RedisMemoryStore:
                 )
                 self._client = None
 
+        for key, item in list(self._fallback.items()):
+            if self._remaining_ttl_seconds(item) == 0:
+                self._fallback.pop(key, None)
         return list(self._fallback.values())
 
     @staticmethod
@@ -504,6 +513,34 @@ class RedisMemoryStore:
     def coerce_timestamp(value: Optional[object]) -> datetime:
         """Expose timestamp coercion for store adapters."""
         return RedisMemoryStore._coerce_timestamp(value)
+
+    def _remaining_ttl_seconds(self, item: WorkingMemoryItem) -> int:
+        created_at = item.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        expires_at = created_at + timedelta(
+            seconds=item.ttl_seconds or self._ttl_seconds
+        )
+        return max(0, ceil((expires_at - datetime.now(timezone.utc)).total_seconds()))
+
+    def _migrate_fallback(self, client: Any) -> bool:
+        for key, item in list(self._fallback.items()):
+            ttl_seconds = self._remaining_ttl_seconds(item)
+            if ttl_seconds == 0:
+                self._fallback.pop(key, None)
+                continue
+            try:
+                client.setex(
+                    name=key,
+                    time=ttl_seconds,
+                    value=json.dumps(asdict(item), default=str),
+                )
+            except Exception as exc:  # pragma: no cover - runtime client failure
+                self._logger.warning("Redis fallback migration failed (%s).", exc)
+                self._client = None
+                return False
+            self._fallback.pop(key, None)
+        return True
 
     def _initialise_client(self) -> None:
         """Initialise the Redis client if the dependency is available."""
@@ -535,6 +572,8 @@ class RedisMemoryStore:
         if self._client is None:
             try:
                 self._client = self._attempt_connect()
+                if self._client is None or not self._migrate_fallback(self._client):
+                    return False
             except Exception as exc:  # pragma: no cover - runtime dependent
                 self._logger.debug("Redis reconnect attempt failed: %s", exc)
                 self._client = None
