@@ -8,6 +8,9 @@ The package version source of truth is `[project].version` in `pyproject.toml` (
 
 ## [Unreleased]
 
+### Security
+- 2026-11-14 — Pending publication: upgraded locked `aiohttp` 3.14.3 → 3.14.4 and `urllib3` 2.7.0 → 2.8.0; upgraded `yarl` 1.24.5 → 1.25.1 as required by aiohttp. Locally qualified only; this does not claim closure of all security findings.
+
 ### Changed
 - Semantic-node reads that fail after task-result persistence now report the safe `semantic:summary` boundary as a `partial` outcome, so controller and automatic mitigation remain skipped instead of surfacing a workflow failure.
 - Provider-backed acceptance, WebSocket/dashboard exposure, and CLI/webhook exports are explicitly documented as deferred outside the current local-first baseline.
