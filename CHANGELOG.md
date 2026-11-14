@@ -9,6 +9,7 @@ The package version source of truth is `[project].version` in `pyproject.toml` (
 ## [Unreleased]
 
 ### Security
+- Updated the locked OpenTelemetry family to 1.45.2 / 0.66b2 for GHSA-xcq7-p3pf-p88h and GHSA-mf5v-w3w3-f6cg, including the required OTLP common exporter.
 - Updated locked multidict 6.7.1 to 6.9.1 for GHSA-54p9-h82j-f925; local qualification and independent review pending.
 - 2026-11-14 — Updated LiteLLM 1.84.0 → 1.100.4 and its five mandatory locked dependencies; locally qualified, pending independent review and publication. No package-version or provider-behavior change.
 - 2026-11-14 — Qualified locally, pending independent review and publication: locked `oauthlib` 3.3.1 → 4.0.1 and, independently, `filelock` 3.32.2 → 4.2.1. Frozen all-extras installation, offline library operations and bounded regression gates passed; real-store integration and remote alert closure were not verified.
