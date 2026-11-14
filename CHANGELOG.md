@@ -9,6 +9,7 @@ The package version source of truth is `[project].version` in `pyproject.toml` (
 ## [Unreleased]
 
 ### Security
+- 2026-11-14 — Updated LiteLLM 1.84.0 → 1.100.4 and its five mandatory locked dependencies; locally qualified, pending independent review and publication. No package-version or provider-behavior change.
 - 2026-11-14 — Qualified locally, pending independent review and publication: locked `oauthlib` 3.3.1 → 4.0.1 and, independently, `filelock` 3.32.2 → 4.2.1. Frozen all-extras installation, offline library operations and bounded regression gates passed; real-store integration and remote alert closure were not verified.
 - 2026-11-14 — Pending publication: upgraded locked `aiohttp` 3.14.3 → 3.14.4 and `urllib3` 2.7.0 → 2.8.0; upgraded `yarl` 1.24.5 → 1.25.1 as required by aiohttp. Locally qualified only; this does not claim closure of all security findings.
 
